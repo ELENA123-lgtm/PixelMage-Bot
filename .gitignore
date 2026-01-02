@@ -1,0 +1,12 @@
+.env
+*.log
+*.db
+__pycache__/
+*.pyc
+*.pid
+generated_*.png
+edited_*.png
+temp_*.png
+bot_cache.db
+payments.db
+subscriptions.db
