@@ -28,9 +28,38 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+# ========== ОТЛАДКА ДЛЯ RAILWAY ==========
+logger = logging.getLogger(__name__)
 
+# Проверяем переменные окружения
+logger.info("=" * 50)
+logger.info("ПРОВЕРКА ПЕРЕМЕННЫХ RAILWAY")
+logger.info("=" * 50)
+
+# Проверяем только наличие ключей (без значений)
+all_vars = os.environ.keys()
+logger.info(f"Всего переменных: {len(all_vars)}")
+logger.info(f"BOT_TOKEN существует: {'BOT_TOKEN' in all_vars}")
+logger.info(f"AITUNNEL_API_KEY существует: {'AITUNNEL_API_KEY' in all_vars}")
+
+# Получаем значения
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+AITUNNEL_API_KEY = os.getenv("AITUNNEL_API_KEY")
+
+logger.info(f"BOT_TOKEN не пустой: {bool(BOT_TOKEN)}")
+logger.info(f"AITUNNEL_API_KEY не пустой: {bool(AITUNNEL_API_KEY)}")
+
+if not BOT_TOKEN or not AITUNNEL_API_KEY:
+    logger.error("❌ ОШИБКА: BOT_TOKEN или AITUNNEL_API_KEY не найдены!")
+    # Выводим первые 5 переменных для отладки
+    logger.info("Первые 5 переменных окружения:")
+    for i, key in enumerate(list(all_vars)[:5]):
+        logger.info(f"  {i+1}. {key}")
+    exit(1)
+else:
+    logger.info("✅ Переменные загружены успешно!")
 # ========== ЗАГРУЗКА КЛЮЧЕЙ ==========
-load_dotenv('.env')
+#load_dotenv('.env')
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 AITUNNEL_API_KEY = os.getenv("AITUNNEL_API_KEY")
 
