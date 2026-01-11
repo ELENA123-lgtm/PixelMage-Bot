@@ -2,6 +2,16 @@ import os
 import asyncio
 import sys
 
+# ОТЛАДКА: Проверяем переменные перед запуском
+print("=" * 50)
+print("🚀 RAILWAY_RUN.PY - НАЧАЛО")
+print("=" * 50)
+print(f"BOT_TOKEN в окружении: {'BOT_TOKEN' in os.environ}")
+print(f"AITUNNEL_API_KEY в окружении: {'AITUNNEL_API_KEY' in os.environ}")
+print(f"Текущая директория: {os.getcwd()}")
+print(f"Содержимое директории: {os.listdir('.')}")
+print("=" * 50)
+
 # Добавляем текущую директорию в путь
 sys.path.insert(0, os.path.dirname(__file__))
 
