@@ -934,7 +934,7 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
             update_user_stats(message.from_user.id, 1)
             await handle_generation_results(message, result)
         else:
-            error_msg = result.get("message", "Неизвестная ошибка)
+            error_msg = result.get("message", "Неизвестная ошибка")
             await message.answer(
                 f"❌ <b>Ошибка:</b> {error_msg}",
                 parse_mode="HTML",
