@@ -1630,7 +1630,18 @@ async def handle_any_message(message: types.Message, state: FSMContext):
             reply_markup=get_cancel_keyboard()
         )
 
-
+# ========== ВРЕМЕННЫЙ ФИКС ДЛЯ КНОПКИ "СОЗДАТЬ" ==========
+@dp.message(F.text == "🖼️ Создать")
+async def btn_simple_create(message: types.Message, state: FSMContext):
+    """Простая версия кнопки создания"""
+    await message.answer(
+        "✍️ <b>Введите описание изображения:</b>\n\n"
+        "<i>Пример: космический пейзаж с планетами</i>\n"
+        "<i>Или нажмите ⬅️ Назад</i>",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(Form.waiting_for_prompt)
 # ========== ЗАПУСК БОТА ==========
 async def main():
     logger.info("=" * 50)
