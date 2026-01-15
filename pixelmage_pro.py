@@ -836,7 +836,16 @@ async def cmd_stats(message: types.Message):
 
     await message.answer(stats_text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
-
+# ========== ВРЕМЕННО ОТКЛЮЧАЕМ КНОПКУ ПОКУПКИ ==========
+@dp.message(F.text == "🖼 1 генерация - 21 руб")
+async def temp_disable_buy(message: types.Message):
+    """Временно отключаем кнопку покупки"""
+    await message.answer(
+        "ℹ️ <b>Используйте кнопку 🖼️ Создать</b>\n\n"
+        "Для создания изображения нажмите 🖼️ Создать",
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard()
+    )
 @dp.message(F.text == "🖼️ Создать")
 async def btn_single(message: types.Message, state: FSMContext):
     """Одно изображение (простая версия)"""
