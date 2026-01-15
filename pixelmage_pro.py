@@ -867,12 +867,31 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
         await message.answer("⚠️ Промпт слишком длинный (макс. 1000 символов)")
         return
     
-    # Списываем 1 изображение с баланса
+       # Списываем 1 изображение с баланса
     user_id = message.from_user.id
     conn = sqlite3.connect('payments.db')
     c = conn.cursor()
-    c.execute("UPDATE user_balance SET images_left = images_left - 1 WHERE user_id = ? AND images_left > 0", (user_id,))
-    conn.commit()
+    
+    # Сначала проверяем, есть ли запись у пользователя
+    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
+    balance_data = c.fetchone()
+    
+    if not balance_data:
+        # Если нет записи - создаем с 0 балансом
+        c.execute("INSERT OR IGNORE INTO user_balance (user_id, images_left) VALUES (?, ?)", (user_id, 0))
+        conn.commit()
+        new_balance = 0
+    else:
+        # Если есть запись - списываем
+        c.execute("UPDATE user_balance SET images_left = images_left - 1 WHERE user_id = ? AND images_left > 0", (user_id,))
+        conn.commit()
+        
+        # Проверяем новый баланс
+        c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
+        new_balance_data = c.fetchone()
+        new_balance = new_balance_data[0] if new_balance_data else 0
+    
+    conn.close()
     
     # Проверяем, списалось ли
     c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
