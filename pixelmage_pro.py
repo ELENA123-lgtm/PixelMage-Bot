@@ -839,26 +839,7 @@ async def cmd_stats(message: types.Message):
 
 @dp.message(F.text == "🖼️ Создать")
 async def btn_single(message: types.Message, state: FSMContext):
-    """Одно изображение"""
-    # Проверяем баланс
-    user_id = message.from_user.id
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
-    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-    balance_data = c.fetchone()
-    images_left = balance_data[0] if balance_data else 0
-    conn.close()
-    
-    if images_left <= 0:
-        await message.answer(
-            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
-            "Для создания 1 изображения нужно оплатить 21 руб.\n"
-            "Используйте команду /price для пополнения баланса.",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-        return
-    
+    """Одно изображение (простая версия)"""
     await message.answer(
         "✍️ <b>Введите описание изображения:</b>\n\n"
         "<i>Пример: космический пейзаж с планетами</i>\n"
