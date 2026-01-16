@@ -20,15 +20,12 @@ from aiogram.types import (
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from dotenv import load_dotenv
 
 # ========== НАСТРОЙКА ЛОГИРОВАНИЯ ==========
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger(__name__)
-# ========== ОТЛАДКА ДЛЯ RAILWAY ==========
 logger = logging.getLogger(__name__)
 
 # Проверяем переменные окружения
@@ -41,67 +38,38 @@ all_vars = os.environ.keys()
 logger.info(f"Всего переменных: {len(all_vars)}")
 logger.info(f"BOT_TOKEN существует: {'BOT_TOKEN' in all_vars}")
 logger.info(f"AITUNNEL_API_KEY существует: {'AITUNNEL_API_KEY' in all_vars}")
+logger.info(f"YOOKASSA_SHOP_ID существует: {'YOOKASSA_SHOP_ID' in all_vars}")
+logger.info(f"YOOKASSA_SECRET_KEY существует: {'YOOKASSA_SECRET_KEY' in all_vars}")
 
 # Получаем значения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 AITUNNEL_API_KEY = os.getenv("AITUNNEL_API_KEY")
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 
 logger.info(f"BOT_TOKEN не пустой: {bool(BOT_TOKEN)}")
 logger.info(f"AITUNNEL_API_KEY не пустой: {bool(AITUNNEL_API_KEY)}")
+logger.info(f"YOOKASSA_SHOP_ID не пустой: {bool(YOOKASSA_SHOP_ID)}")
+logger.info(f"YOOKASSA_SECRET_KEY не пустой: {bool(YOOKASSA_SECRET_KEY)}")
 
 if not BOT_TOKEN or not AITUNNEL_API_KEY:
     logger.error("❌ ОШИБКА: BOT_TOKEN или AITUNNEL_API_KEY не найдены!")
-    # Выводим первые 5 переменных для отладки
-    logger.info("Первые 5 переменных окружения:")
-    for i, key in enumerate(list(all_vars)[:5]):
-        logger.info(f"  {i+1}. {key}")
     exit(1)
+
+if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
+    logger.warning("⚠️ ВНИМАНИЕ: YOOKASSA ключи не найдены, включен тестовый режим оплаты")
 else:
-    logger.info("✅ Переменные загружены успешно!")
-# ========== ЗАГРУЗКА КЛЮЧЕЙ ==========
-#load_dotenv('.env')
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-AITUNNEL_API_KEY = os.getenv("AITUNNEL_API_KEY")
-
-if not BOT_TOKEN or not AITUNNEL_API_KEY:
-    logger.error("❌ Не найдены BOT_TOKEN или AITUNNEL_API_KEY!")
-    exit(1)
-
-# ========== ЮKASSA ПЛАТЕЖИ ==========
-# Инициализация базы платежей
-def init_payments_db():
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS payments
-                 (user_id INTEGER,
-                  amount REAL,
-                  payment_id TEXT,
-                  status TEXT,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS user_balance
-                 (user_id INTEGER PRIMARY KEY,
-                  images_left INTEGER DEFAULT 0,
-                  total_spent REAL DEFAULT 0)''')
-    conn.commit()
-    conn.close()
-
-init_payments_db()
+    logger.info("✅ YOOKASSA ключи найдены, реальная оплата включена")
 
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# ========== ОЧЕРЕДЬ ЗАПРОСОВ ==========
-request_queue = deque()
-queue_lock = asyncio.Lock()
-PROCESSING_LIMIT = 3
-MAX_PROMPTS_PER_BATCH = 5
-
-
-# ========== БАЗА ДАННЫХ ДЛЯ КЭША ==========
+# ========== БАЗА ДАННЫХ ==========
 def init_db():
-    """Инициализация базы данных"""
+    """Инициализация всех баз данных"""
+    # База для кэша
     conn = sqlite3.connect('bot_cache.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS image_cache
@@ -115,10 +83,37 @@ def init_db():
                   last_request TIMESTAMP)''')
     conn.commit()
     conn.close()
-
+    
+    # База для платежей
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS payments
+                 (user_id INTEGER,
+                  amount REAL,
+                  payment_id TEXT,
+                  status TEXT,
+                  yookassa_payment_id TEXT,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_balance
+                 (user_id INTEGER PRIMARY KEY,
+                  images_left INTEGER DEFAULT 0,
+                  total_spent REAL DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS payment_history
+                 (user_id INTEGER,
+                  amount REAL,
+                  description TEXT,
+                  status TEXT,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    conn.commit()
+    conn.close()
 
 init_db()
 
+# ========== ОЧЕРЕДЬ ЗАПРОСОВ ==========
+request_queue = deque()
+queue_lock = asyncio.Lock()
+PROCESSING_LIMIT = 3
+MAX_PROMPTS_PER_BATCH = 5
 
 # ========== ФУНКЦИИ КЭША ==========
 def get_cached_image(prompt: str) -> Optional[str]:
@@ -131,7 +126,6 @@ def get_cached_image(prompt: str) -> Optional[str]:
     conn.close()
     return result[0] if result else None
 
-
 def save_to_cache(prompt: str, file_path: str):
     """Сохраняет изображение в кэш"""
     prompt_hash = hashlib.md5(prompt.encode()).hexdigest()
@@ -141,7 +135,6 @@ def save_to_cache(prompt: str, file_path: str):
               (prompt_hash, file_path))
     conn.commit()
     conn.close()
-
 
 def update_user_stats(user_id: int, images_count: int = 1):
     """Обновляет статистика пользователя"""
@@ -156,10 +149,8 @@ def update_user_stats(user_id: int, images_count: int = 1):
     conn.commit()
     conn.close()
 
-
 def enhance_edit_prompt(original_prompt: str) -> str:
     """Автоматически улучшаем промпт для сохранения лиц"""
-
     keywords_for_background = ['фон', 'background', 'задний план', 'пейзаж', 'окружение', 'пейзаж', 'обстановка']
     keywords_for_style = ['стиль', 'style', 'в стиле', 'как', 'похоже на', 'стилизация']
     keywords_for_clothing = ['одежда', 'костюм', 'платье', 'футболка', 'clothing', 'outfit', 'наряд', 'форма']
@@ -204,14 +195,12 @@ def enhance_edit_prompt(original_prompt: str) -> str:
             f"Preserve the essence of the original photo."
         )
     else:
-        # Общий шаблон для любых изменений
         return (
             f"{original_prompt}. "
             f"Try to preserve faces and people if possible. "
             f"Keep facial features similar. "
             f"Maintain the original composition and subjects."
         )
-
 
 # ========== СОСТОЯНИЯ FSM ==========
 class Form(StatesGroup):
@@ -220,13 +209,12 @@ class Form(StatesGroup):
     waiting_for_edit_prompt = State()
     waiting_for_photo = State()
 
-
 # ========== КЛАВИАТУРЫ ==========
 def get_main_keyboard():
     """Основная клавиатура с кнопками"""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🎨 Создать"), KeyboardButton(text="📝 Пакет промптов")],  # ИЗМЕНИЛИ 🖼️ на 🎨
+            [KeyboardButton(text="🎨 Создать"), KeyboardButton(text="📝 Пакет промптов")],
             [KeyboardButton(text="✏️ Редактировать"), KeyboardButton(text="ℹ️ Помощь")],
             [KeyboardButton(text="💰 Цены/Оплата"), KeyboardButton(text="📊 Статистика")],
             [KeyboardButton(text="🚪 /start"), KeyboardButton(text="⬅️ Назад")]
@@ -236,7 +224,6 @@ def get_main_keyboard():
     )
     return keyboard
 
-
 def get_cancel_keyboard():
     """Клавиатура для отмены"""
     return ReplyKeyboardMarkup(
@@ -244,79 +231,216 @@ def get_cancel_keyboard():
         resize_keyboard=True
     )
 
+def get_payment_keyboard():
+    """Клавиатура для оплаты"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="✅ Я оплатил")],
+            [KeyboardButton(text="🔄 Проверить оплату")],
+            [KeyboardButton(text="⬅️ Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+# ========== БАЛАНС И ОПЛАТА ==========
+async def check_balance(user_id: int) -> int:
+    """Проверяет баланс пользователя"""
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else 0
+
+async def deduct_balance(user_id: int, amount: int = 1) -> bool:
+    """Списывает изображения с баланса"""
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    
+    # Проверяем баланс
+    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    
+    if not result or result[0] < amount:
+        conn.close()
+        return False
+    
+    # Списание
+    c.execute("UPDATE user_balance SET images_left = images_left - ? WHERE user_id = ?", 
+              (amount, user_id))
+    conn.commit()
+    conn.close()
+    return True
+
+async def add_balance(user_id: int, images_to_add: int, amount: float):
+    """Добавляет изображения на баланс"""
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    
+    c.execute('''INSERT OR REPLACE INTO user_balance 
+                 (user_id, images_left, total_spent) 
+                 VALUES (?, COALESCE((SELECT images_left FROM user_balance WHERE user_id = ?), 0) + ?,
+                         COALESCE((SELECT total_spent FROM user_balance WHERE user_id = ?), 0) + ?)''',
+              (user_id, user_id, images_to_add, user_id, amount))
+    
+    conn.commit()
+    conn.close()
+
+def get_images_count_by_amount(amount: float) -> int:
+    """Сколько изображений дать за сумму"""
+    if amount == 21.0:
+        return 1  # 1 генерация
+    elif amount == 32.0:
+        return 1  # 1 редактирование
+    elif amount == 85.0:
+        return 5  # Пакет 5 промптов
+    return 0
+
+# ========== ЮKASSA ОПЛАТА ==========
+async def create_yookassa_payment(user_id: int, amount: float, description: str):
+    """Создает платеж в ЮKassa"""
+    
+    # Если ключей нет, используем тестовый режим
+    if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
+        return await create_test_payment(user_id, amount, description)
+    
+    try:
+        import yookassa
+        from yookassa import Payment, Configuration
+        
+        # Настройка
+        Configuration.account_id = YOOKASSA_SHOP_ID
+        Configuration.secret_key = YOOKASSA_SECRET_KEY
+        
+        # Уникальный ID платежа
+        payment_id = f"{user_id}_{int(datetime.now().timestamp())}"
+        
+        # Данные платежа
+        payment_data = {
+            "amount": {
+                "value": f"{amount:.2f}",
+                "currency": "RUB"
+            },
+            "payment_method_data": {
+                "type": "bank_card"  # Оплата картой
+            },
+            "confirmation": {
+                "type": "redirect",
+                "return_url": f"https://t.me/{BOT_TOKEN.split(':')[0]}"  # ID бота
+            },
+            "capture": True,
+            "description": description,
+            "metadata": {
+                "user_id": user_id,
+                "images_to_add": get_images_count_by_amount(amount)
+            }
+        }
+        
+        # Создаем платеж
+        payment = Payment.create(payment_data, payment_id)
+        
+        # Сохраняем в БД
+        conn = sqlite3.connect('payments.db')
+        c = conn.cursor()
+        c.execute('''INSERT INTO payments 
+                     (user_id, amount, payment_id, yookassa_payment_id, status, created_at) 
+                     VALUES (?, ?, ?, ?, ?, ?)''',
+                  (user_id, amount, payment_id, payment.id, 'pending', datetime.now()))
+        conn.commit()
+        conn.close()
+        
+        return {
+            "success": True,
+            "payment_url": payment.confirmation.confirmation_url,
+            "payment_id": payment.id,
+            "amount": amount
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка создания платежа ЮKassa: {e}")
+        # Если ошибка, переключаемся на тестовый режим
+        return await create_test_payment(user_id, amount, description)
+
+async def create_test_payment(user_id: int, amount: float, description: str):
+    """Тестовый режим оплаты (если нет ключей ЮKassa)"""
+    images_to_add = get_images_count_by_amount(amount)
+    
+    # Зачисляем сразу
+    await add_balance(user_id, images_to_add, amount)
+    
+    # Сохраняем в историю
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    payment_id = f"test_{uuid.uuid4().hex}"
+    c.execute("INSERT INTO payments (user_id, amount, payment_id, status) VALUES (?, ?, ?, ?)",
+              (user_id, amount, payment_id, 'completed'))
+    c.execute("INSERT INTO payment_history (user_id, amount, description, status) VALUES (?, ?, ?, ?)",
+              (user_id, amount, description, 'completed'))
+    conn.commit()
+    conn.close()
+    
+    return {
+        "success": True,
+        "test_mode": True,
+        "images_added": images_to_add,
+        "amount": amount
+    }
+
+async def check_payment_status(payment_id: str):
+    """Проверяет статус платежа"""
+    if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
+        return None
+    
+    try:
+        import yookassa
+        from yookassa import Payment
+        
+        payment = Payment.find_one(payment_id)
+        return payment.status
+    except:
+        return None
 
 # ========== ФУНКЦИЯ РЕДАКТИРОВАНИЯ ИЗОБРАЖЕНИЙ ==========
 async def edit_image_api(photo_bytes: bytes, edit_prompt: str) -> Dict[str, Any]:
-    """
-    Редактирует загруженное фото через AI Tunnel API.
-    Использует метод edits для редактирования изображений.
-    """
-    # Сохраняем фото во временный файл
+    """Редактирует загруженное фото через AI Tunnel API"""
     temp_file_name = f"temp_upload_{uuid.uuid4().hex}.png"
     with open(temp_file_name, "wb") as f:
         f.write(photo_bytes)
 
     API_URL = "https://api.aitunnel.ru/v1/images/edits"
-
-    headers = {
-        "Authorization": f"Bearer {AITUNNEL_API_KEY}",
-        "Accept": "application/json"
-    }
-
-    # Создаем FormData и открываем файл внутри контекстного менеджера
-    data = aiohttp.FormData()
-    data.add_field('model', 'flux.2-pro')
-    data.add_field('prompt', edit_prompt)
-    data.add_field('n', '1')
-    data.add_field('size', '1024x1024')
-    data.add_field('response_format', 'b64_json')
-
+    headers = {"Authorization": f"Bearer {AITUNNEL_API_KEY}", "Accept": "application/json"}
     timeout = ClientTimeout(total=120)
 
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             logger.info(f"✏️ Редактирую фото: '{edit_prompt[:50]}...'")
 
-            # Открываем файл для чтения в бинарном режиме
             with open(temp_file_name, 'rb') as image_file:
-                # Создаем новую FormData внутри сессии
                 form_data = aiohttp.FormData()
                 form_data.add_field('model', 'flux.2-pro')
                 form_data.add_field('prompt', edit_prompt)
                 form_data.add_field('n', '1')
                 form_data.add_field('size', '1024x1024')
                 form_data.add_field('response_format', 'b64_json')
-                form_data.add_field('image',
-                                    image_file,
-                                    filename='image.png',
-                                    content_type='image/png')
+                form_data.add_field('image', image_file, filename='image.png', content_type='image/png')
 
                 async with session.post(API_URL, headers=headers, data=form_data) as response:
                     response_text = await response.text()
 
                     if response.status == 200:
                         result = await response.json()
-                        logger.info(f"✅ API редактирования вернуло ответ")
+                        logger.info("✅ API редактирования вернуло ответ")
 
                         if 'data' in result and result['data']:
-                            # Получаем base64 изображение
                             if 'b64_json' in result['data'][0]:
                                 image_data = result['data'][0]['b64_json']
                             elif 'url' in result['data'][0] and result['data'][0]['url'].startswith('data:image/'):
-                                # Извлекаем base64 из data URL
                                 base64_data = result['data'][0]['url'].split('base64,')[1]
                                 image_data = base64_data
                             else:
-                                logger.error(f"❌ Неверный формат ответа API: {result}")
-                                return {
-                                    "success": False,
-                                    "error": "invalid_response",
-                                    "message": "Неверный формат ответа API"
-                                }
+                                return {"success": False, "error": "invalid_response", "message": "Неверный формат ответа API"}
 
                             image_bytes = base64.b64decode(image_data)
-
-                            # Сохраняем изображение
                             file_name = f"edited_{uuid.uuid4().hex}.png"
                             with open(file_name, "wb") as f:
                                 f.write(image_bytes)
@@ -324,50 +448,28 @@ async def edit_image_api(photo_bytes: bytes, edit_prompt: str) -> Dict[str, Any]
                             logger.info(f"✅ Изображение сохранено: {file_name}")
                             return {"success": True, "file_path": file_name}
                         else:
-                            logger.error(f"❌ Нет данных в ответе API: {result}")
-                            return {
-                                "success": False,
-                                "error": "no_data",
-                                "message": "API не вернул данные"
-                            }
+                            return {"success": False, "error": "no_data", "message": "API не вернул данные"}
                     else:
                         logger.error(f"❌ Ошибка API {response.status}: {response_text}")
-
-                        # Пытаемся разобрать JSON ошибки
                         try:
                             error_json = json.loads(response_text)
                             error_msg = error_json.get('error', {}).get('message', response_text)
                         except:
                             error_msg = response_text[:200]
-
-                        return {
-                            "success": False,
-                            "error": f"api_error_{response.status}",
-                            "message": f"Ошибка API: {error_msg}"
-                        }
+                        return {"success": False, "error": f"api_error_{response.status}", "message": f"Ошибка API: {error_msg}"}
 
     except asyncio.TimeoutError:
         logger.error("❌ Таймаут при редактировании")
-        return {
-            "success": False,
-            "error": "timeout",
-            "message": "Таймаут при обработке запроса"
-        }
+        return {"success": False, "error": "timeout", "message": "Таймаут при обработке запроса"}
     except Exception as e:
         logger.exception(f"💥 Ошибка при редактировании: {e}")
-        return {
-            "success": False,
-            "error": "unexpected_error",
-            "message": f"Внутренняя ошибка: {str(e)}"
-        }
+        return {"success": False, "error": "unexpected_error", "message": f"Внутренняя ошибка: {str(e)}"}
     finally:
-        # Удаляем временный файл
         try:
             if os.path.exists(temp_file_name):
                 os.remove(temp_file_name)
         except:
             pass
-
 
 # ========== ФУНКЦИЯ ГЕНЕРАЦИИ ИЗОБРАЖЕНИЙ ==========
 async def generate_images_api(prompts: List[str]) -> Dict[str, Any]:
@@ -439,7 +541,6 @@ async def generate_images_api(prompts: List[str]) -> Dict[str, Any]:
 
                                         file_paths.append(file_name)
                                 elif 'b64_json' in item:
-                                    # Если API вернуло base64 напрямую
                                     image_bytes = base64.b64decode(item['b64_json'])
                                     file_name = f"generated_{uuid.uuid4().hex}_{idx}.png"
                                     with open(file_name, "wb") as f:
@@ -461,7 +562,6 @@ async def generate_images_api(prompts: List[str]) -> Dict[str, Any]:
                                     "message": "API не вернул изображения"
                                 })
                         else:
-                            logger.error(f"❌ Неверный ответ от API для промпта: {prompt[:50]}")
                             all_results.append({
                                 "prompt": prompt,
                                 "error": "invalid_response",
@@ -484,7 +584,6 @@ async def generate_images_api(prompts: List[str]) -> Dict[str, Any]:
                 "message": str(e)[:100]
             })
 
-    # Добавляем кэшированные результаты
     for prompt in cached_images:
         all_results.append({
             "prompt": prompt,
@@ -492,7 +591,6 @@ async def generate_images_api(prompts: List[str]) -> Dict[str, Any]:
             "from_cache": True
         })
 
-    # Проверяем успешность
     successful_results = [r for r in all_results if "file_paths" in r]
 
     return {
@@ -504,39 +602,65 @@ async def generate_images_api(prompts: List[str]) -> Dict[str, Any]:
         "total_received": len(successful_results)
     }
 
-
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    """Команда /start"""
+    welcome_text = (
+        "🎨 <b>PixelMage Pro 2.0</b>\n\n"
+        "<b>Продвинутый генератор изображений с реальной оплатой</b>\n\n"
+        "<b>Основные функции:</b>\n"
+        "🎨 <b>Создать</b> - одно изображение по промпту\n"
+        "📝 <b>Пакет промптов</b> - до 5 промптов → до 5 изображений за раз\n"
+        "✏️ <b>Редактировать</b> - изменить фон, стиль или элементы на фото\n\n"
+        "<i>💡 Для использования нужны изображения на балансе</i>\n"
+        "<i>💡 Пополнить баланс можно через 💰 Цены/Оплата</i>\n\n"
+        "<b>💰 Реальная оплата через ЮKassa:</b>\n"
+        "• Безопасно и надежно\n"
+        "• Карты, СБП, ЮMoney\n"
+        "• Мгновенное зачисление\n\n"
+        "<i>Выберите действие ниже:</i>"
+    )
+
+    await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_main_keyboard())
+
+@dp.message(F.text == "🚪 /start")
+async def btn_start_again(message: types.Message, state: FSMContext):
+    """Повторный запуск через кнопку"""
+    await state.clear()
+    await cmd_start(message)
+
+@dp.message(F.text == "⬅️ Назад")
+async def cancel_action(message: types.Message, state: FSMContext):
+    """Отмена текущего действия"""
+    await state.clear()
+    await message.answer("✅ Возвращаюсь в главное меню", reply_markup=get_main_keyboard())
+
 @dp.message(Command("price"))
+@dp.message(F.text == "💰 Цены/Оплата")
 async def cmd_price(message: types.Message):
     """Показывает цены"""
     user_id = message.from_user.id
-    
-    # Проверяем баланс
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
-    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-    balance_data = c.fetchone()
-    images_left = balance_data[0] if balance_data else 0
-    conn.close()
+    balance = await check_balance(user_id)
     
     text = (
         "🎨 <b>Тарифы PixelMage Pro</b>\n\n"
-        f"💰 <b>Ваш баланс:</b> {images_left} изображений\n\n"
+        f"💰 <b>Ваш баланс:</b> {balance} изображений\n\n"
         "🖼 <b>Генерация изображений:</b>\n"
         "• 🎟 1 редактирование — <b>32 руб.</b>\n"
-        "• 💰 1 генерация — <b>21 руб.</b>\n"  # ИЗМЕНИЛИ 🖼 на 💰
+        "• 💰 1 генерация — <b>21 руб.</b>\n"
         "• 📦 Пакет 5 промптов — <b>85 руб.</b>\n\n"
         "💳 <b>Как оплатить:</b>\n"
         "1. Нажмите на нужную кнопку с ценой\n"
         "2. Перейдите по ссылке для оплаты\n"
-        "3. Оплатите через СберПэй или карту\n"
+        "3. Оплатите картой, СБП или ЮMoney\n"
         "4. Вернитесь в бота и нажмите ✅ Я оплатил\n\n"
         "<i>После оплаты изображения зачислятся автоматически</i>"
     )
     
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🎟 1 редактирование - 32 руб"), KeyboardButton(text="💰 1 генерация - 21 руб")],  # ИЗМЕНИЛИ 🖼 на 💰
+            [KeyboardButton(text="🎟 1 редактирование - 32 руб"), KeyboardButton(text="💰 1 генерация - 21 руб")],
             [KeyboardButton(text="📦 Пакет 5 промптов - 85 руб"), KeyboardButton(text="📊 Мой баланс")],
             [KeyboardButton(text="⬅️ Назад")]
         ],
@@ -544,13 +668,6 @@ async def cmd_price(message: types.Message):
     )
     
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-
-
-@dp.message(F.text == "💰 Цены/Оплата")
-async def btn_prices(message: types.Message):
-    """Кнопка цен"""
-    await cmd_price(message)
-
 
 @dp.message(F.text == "📊 Мой баланс")
 async def btn_my_balance(message: types.Message):
@@ -561,6 +678,10 @@ async def btn_my_balance(message: types.Message):
     c = conn.cursor()
     c.execute("SELECT images_left, total_spent FROM user_balance WHERE user_id = ?", (user_id,))
     balance_data = c.fetchone()
+    
+    # Получаем историю платежей
+    c.execute("SELECT amount, description, status, created_at FROM payment_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 5", (user_id,))
+    history = c.fetchall()
     conn.close()
     
     if balance_data:
@@ -569,8 +690,13 @@ async def btn_my_balance(message: types.Message):
             f"💰 <b>Ваш баланс</b>\n\n"
             f"• Доступно изображений: <b>{images_left}</b>\n"
             f"• Всего потрачено: <b>{total_spent} руб.</b>\n\n"
-            f"<i>Используйте кнопки ниже для пополнения</i>"
         )
+        
+        if history:
+            text += "📋 <b>Последние платежи:</b>\n"
+            for amount, description, status, created_at in history:
+                status_icon = "✅" if status == 'completed' else "⏳"
+                text += f"• {status_icon} {amount} руб. - {description}\n"
     else:
         text = (
             f"💰 <b>Ваш баланс</b>\n\n"
@@ -582,14 +708,13 @@ async def btn_my_balance(message: types.Message):
     
     await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
-
-# ========== ОПЛАТА ЮKASSA ==========
+# ========== КНОПКИ ОПЛАТЫ ==========
 @dp.message(F.text.startswith("🎟"))
 async def btn_buy_edit(message: types.Message):
     """Покупка редактирования (32 руб)"""
     await create_payment_menu(message, 32.0, "1 редактирование изображения")
 
-@dp.message(F.text.startswith("💰"))  # ИЗМЕНИЛИ 🖼 на 💰
+@dp.message(F.text.startswith("💰"))
 async def btn_buy_generate(message: types.Message):
     """Покупка генерации (21 руб)"""
     await create_payment_menu(message, 21.0, "1 генерация изображения")
@@ -603,61 +728,151 @@ async def create_payment_menu(message: types.Message, amount: float, description
     """Создает меню оплаты"""
     user_id = message.from_user.id
     
-    # Тестовый режим - сразу зачисляем
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
+    # Создаем платеж в ЮKassa
+    result = await create_yookassa_payment(user_id, amount, description)
     
-    images_to_add = 0
-    if amount == 32.0:  # Редактирование
-        images_to_add = 1
-    elif amount == 21.0:  # Генерация
-        images_to_add = 1
-    elif amount == 85.0:  # Пакет
-        images_to_add = 5
+    if not result.get("success"):
+        await message.answer(
+            f"❌ Ошибка при создании платежа: {result.get('error', 'Неизвестная ошибка')}",
+            reply_markup=get_main_keyboard()
+        )
+        return
     
-    c.execute('''INSERT OR REPLACE INTO user_balance 
-                 (user_id, images_left, total_spent) 
-                 VALUES (?, COALESCE((SELECT images_left FROM user_balance WHERE user_id = ?), 0) + ?,
-                         COALESCE((SELECT total_spent FROM user_balance WHERE user_id = ?), 0) + ?)''',
-              (user_id, user_id, images_to_add, user_id, amount))
-    
-    # Тестовый платеж
-    payment_id = f"test_{uuid.uuid4().hex}"
-    c.execute("INSERT INTO payments (user_id, amount, payment_id, status) VALUES (?, ?, ?, ?)",
-              (user_id, amount, payment_id, 'completed'))
-    
-    conn.commit()
-    conn.close()
-    
-    await message.answer(
-        f"✅ <b>ТЕСТОВЫЙ РЕЖИМ</b>\n\n"
-        f"<b>Услуга:</b> {description}\n"
-        f"<b>Сумма:</b> {amount} руб.\n"
-        f"<b>Зачислено:</b> {images_to_add} изображений\n\n"
-        f"<i>В тестовом режиме оплата не требуется</i>\n"
-        f"<i>Теперь можете использовать бота!</i>",
-        parse_mode="HTML",
-        reply_markup=get_main_keyboard()
-    )
-    return
+    if result.get("test_mode"):
+        # Тестовый режим - уже зачислено
+        await message.answer(
+            f"✅ <b>ТЕСТОВЫЙ РЕЖИМ</b>\n\n"
+            f"<b>Услуга:</b> {description}\n"
+            f"<b>Сумма:</b> {amount} руб.\n"
+            f"<b>Зачислено:</b> {result['images_added']} изображений\n\n"
+            f"<i>В тестовом режиме оплата не требуется</i>\n"
+            f"<i>Теперь можете использовать бота!</i>",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+    else:
+        # Реальный платеж
+        payment_url = result.get("payment_url")
+        
+        await message.answer(
+            f"💳 <b>Счет на оплату</b>\n\n"
+            f"<b>Услуга:</b> {description}\n"
+            f"<b>Сумма:</b> {amount} руб.\n"
+            f"<b>Получите:</b> {get_images_count_by_amount(amount)} изображений\n\n"
+            f"<b>Для оплаты:</b>\n"
+            f"1. Нажмите на ссылку ниже 👇\n"
+            f"2. Оплатите через СБП или карту\n"
+            f"3. Вернитесь в бота\n"
+            f"4. Нажмите <b>✅ Я оплатил</b>\n\n"
+            f"🔗 <a href='{payment_url}'>Оплатить {amount} руб.</a>\n\n"
+            f"<i>После успешной оплаты изображения автоматически зачислятся на баланс</i>",
+            parse_mode="HTML",
+            reply_markup=get_payment_keyboard()
+        )
 
 @dp.message(F.text == "✅ Я оплатил")
 async def btn_payment_done(message: types.Message):
     """Проверка оплаты"""
-    await message.answer(
-        "ℹ️ <b>ТЕСТОВЫЙ РЕЖИМ</b>\n\n"
-        "В тестовом режиме оплата не требуется.\n"
-        "Изображения уже зачислены на ваш баланс.\n"
-        "Используйте кнопку 📊 Мой баланс для проверки.",
-        parse_mode="HTML",
-        reply_markup=get_main_keyboard()
-    )
+    user_id = message.from_user.id
+    
+    # Ищем последний ожидающий платеж пользователя
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    c.execute("SELECT payment_id, yookassa_payment_id, amount FROM payments WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1", (user_id,))
+    payment_data = c.fetchone()
+    conn.close()
+    
+    if not payment_data:
+        await message.answer(
+            "ℹ️ У вас нет ожидающих платежей.\n\n"
+            "Если вы только что оплатили, подождите 1-2 минуты.\n"
+            "Система обрабатывает платежи автоматически.",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    
+    payment_id, yookassa_payment_id, amount = payment_data
+    
+    # Проверяем статус в ЮKassa
+    if yookassa_payment_id:
+        status = await check_payment_status(yookassa_payment_id)
+        
+        if status == 'succeeded':
+            # Зачисляем изображения
+            images_to_add = get_images_count_by_amount(amount)
+            await add_balance(user_id, images_to_add, amount)
+            
+            # Обновляем статус платежа
+            conn = sqlite3.connect('payments.db')
+            c = conn.cursor()
+            c.execute("UPDATE payments SET status = 'completed' WHERE payment_id = ?", (payment_id,))
+            c.execute("INSERT INTO payment_history (user_id, amount, description, status) VALUES (?, ?, ?, ?)",
+                      (user_id, amount, f"Покупка {images_to_add} изображений", 'completed'))
+            conn.commit()
+            conn.close()
+            
+            balance = await check_balance(user_id)
+            
+            await message.answer(
+                f"✅ <b>Оплата подтверждена!</b>\n\n"
+                f"<b>Зачислено:</b> {images_to_add} изображений\n"
+                f"<b>Ваш баланс:</b> {balance} изображений\n\n"
+                f"<i>Теперь можете использовать функции бота</i>",
+                parse_mode="HTML",
+                reply_markup=get_main_keyboard()
+            )
+        elif status == 'pending':
+            await message.answer(
+                "⏳ <b>Платеж еще обрабатывается</b>\n\n"
+                "Обычно это занимает 1-2 минуты.\n"
+                "Попробуйте нажать <b>✅ Я оплатил</b> через минуту.",
+                parse_mode="HTML",
+                reply_markup=get_payment_keyboard()
+            )
+        else:
+            await message.answer(
+                f"❌ <b>Платеж не найден или отменен</b>\n\n"
+                f"Статус: {status}\n\n"
+                f"Попробуйте оплатить снова или обратитесь в поддержку.",
+                parse_mode="HTML",
+                reply_markup=get_main_keyboard()
+            )
+    else:
+        # Тестовый режим
+        await message.answer(
+            "ℹ️ <b>ТЕСТОВЫЙ РЕЖИМ</b>\n\n"
+            "В тестовом режиме оплата не требуется.\n"
+            "Изображения уже зачислены на ваш баланс.\n"
+            "Используйте кнопку 📊 Мой баланс для проверки.",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
 
+@dp.message(F.text == "🔄 Проверить оплату")
+async def btn_check_payment(message: types.Message):
+    """Проверка оплаты"""
+    await btn_payment_done(message)
 
 # ========== ОСНОВНЫЕ КНОПКИ ==========
 @dp.message(F.text == "🎨 Создать")
 async def btn_single(message: types.Message, state: FSMContext):
     """Одно изображение"""
+    user_id = message.from_user.id
+    balance = await check_balance(user_id)
+    
+    if balance <= 0:
+        await message.answer(
+            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
+            "Чтобы создать изображение:\n"
+            "1. Нажмите 💰 Цены/Оплата\n"
+            "2. Выберите тариф\n"
+            "3. Оплатите необходимое количество\n\n"
+            f"<i>Ваш баланс: {balance} изображений</i>",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    
     await message.answer(
         "✍️ <b>Введите описание изображения:</b>\n\n"
         "<i>Пример: космический пейзаж с планетами</i>\n"
@@ -667,26 +882,48 @@ async def btn_single(message: types.Message, state: FSMContext):
     )
     await state.set_state(Form.waiting_for_prompt)
 
-
 @dp.message(F.text == "📝 Пакет промптов")
 async def btn_batch(message: types.Message, state: FSMContext):
     """Пакетная обработка промптов"""
-    # Временно без проверки баланса
+    user_id = message.from_user.id
+    balance = await check_balance(user_id)
+    
+    if balance <= 0:
+        await message.answer(
+            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
+            "Для пакетной обработки нужно минимум 1 изображение\n"
+            "Пополните баланс через 💰 Цены/Оплата",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    
     await message.answer(
         "📝 <b>Введите до 5 промптов через точку с запятой:</b>\n\n"
         "<i>Пример: космический кот; фэнтези замок; неоновый город</i>\n"
-        "<i>Каждый промпт → отдельное изображение</i>\n"
+        "<i>Каждый промпт → одно изображение</i>\n"
         "<i>Или нажмите ⬅️ Назад</i>",
         parse_mode="HTML",
         reply_markup=get_cancel_keyboard()
     )
     await state.set_state(Form.waiting_for_batch_prompts)
 
-
 @dp.message(F.text == "✏️ Редактировать")
 async def btn_edit(message: types.Message, state: FSMContext):
     """Редактирование фото"""
-    # Временно без проверки баланса
+    user_id = message.from_user.id
+    balance = await check_balance(user_id)
+    
+    if balance <= 0:
+        await message.answer(
+            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
+            "Для редактирования фото нужно 1 изображение\n"
+            "Пополните баланс через 💰 Цены/Оплата",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+        return
+    
     await message.answer(
         "✏️ <b>Редактирование фото (улучшенная версия)</b>\n\n"
         "📤 <b>Загрузите фото для редактирования:</b>\n\n"
@@ -703,45 +940,6 @@ async def btn_edit(message: types.Message, state: FSMContext):
     )
     await state.set_state(Form.waiting_for_photo)
 
-
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    """Команда /start"""
-    welcome_text = (
-        "🎨 <b>PixelMage Pro 2.0</b>\n\n"
-        "<b>Продвинутый генератор изображений</b>\n\n"
-        "<b>Основные функции:</b>\n"
-        "🎨 <b>Создать</b> - одно изображение по промпту\n"
-        "📝 <b>Пакет промптов</b> - до 5 промптов → до 5 изображений за раз\n"
-        "✏️ <b>Редактировать</b> - изменить фон, стиль или элементы на фото\n\n"
-        "<i>💡 При редактировании AI старается сохранить лица</i>\n"
-        "<i>💡 Для замены фона лучше всего сохраняются лица</i>\n\n"
-        "<b>💰 Оплата:</b> /price - цены и пополнение баланса\n"
-        "<b>📊 Статистика:</b> кэширование, очередь запросов, лимиты\n\n"
-        "<i>Используйте кнопки ниже или команды:</i>\n"
-        "/generate - одно изображение\n"
-        "/batch - пакетная обработка\n"
-        "/price - цены на услуги\n"
-        "/help - справка"
-    )
-
-    await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_main_keyboard())
-
-
-@dp.message(F.text == "🚪 /start")
-async def btn_start_again(message: types.Message, state: FSMContext):
-    """Повторный запуск через кнопку"""
-    await state.clear()
-    await cmd_start(message)
-
-
-@dp.message(F.text == "⬅️ Назад")
-async def cancel_action(message: types.Message, state: FSMContext):
-    """Отмена текущего действия"""
-    await state.clear()
-    await message.answer("✅ Возвращаюсь в главное меню", reply_markup=get_main_keyboard())
-
-
 @dp.message(F.text == "ℹ️ Помощь")
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
@@ -749,50 +947,30 @@ async def cmd_help(message: types.Message):
     help_text = (
         "📋 <b>PixelMage Pro - Полная справка</b>\n\n"
         "<b>🎨 Создать (один промпт):</b>\n"
+        "• Стоимость: 1 изображение с баланса\n"
         "• Введите описание изображения\n"
-        "• Получите один результат\n"
         "• Используется кэш для повторных запросов\n\n"
         "<b>📝 Пакет промптов (до 5):</b>\n"
+        "• Каждый промпт = 1 изображение с баланса\n"
         "• Введите до 5 промптов через точку с запятой\n"
-        "• Каждый промпт → отдельное изображение\n"
         "• Эффективная пакетная обработка\n\n"
         "<b>✏️ Редактировать (улучшенная версия):</b>\n"
+        "• Стоимость: 1 изображение с баланса\n"
         "• Загрузите фото как образец\n"
         "• Введите, что изменить (фон, стиль, элементы)\n"
-        "• AI старается сохранить лица людей\n"
-        "• Лучше всего работает для замены фона\n\n"
-        "<b>Советы по редактированию:</b>\n"
-        "• 'поменяй фон на пляж' - хорошо сохраняет лица\n"
-        "• 'добавь солнцезащитные очки' - добавляет элементы\n"
-        "• 'в стиле советской открытки' - меняет стиль\n"
-        "• 'убери человека справа' - удаляет элементы\n\n"
-        "<b>💰 Оплата:</b> /price - цены и пополнение баланса\n"
-        "<b>📊 Статистика:</b> Ваша активность\n\n"
+        "• AI старается сохранить лица людей\n\n"
+        "<b>💰 Оплата:</b>\n"
+        "• Реальная оплата через ЮKassa\n"
+        "• Безопасно, с защитой платежей\n"
+        "• Карты, СБП, ЮMoney\n"
+        "• Мгновенное зачисление\n\n"
+        "<b>📊 Статистика:</b> Ваша активность и баланс\n\n"
         "<b>Примеры промптов:</b>\n"
         "• космический кот в скафандре\n"
         "• портрет эльфа; фэнтези арт; магический лес\n"
-        "• поменяй фон на пляж (лучше всего сохраняет лица)"
+        "• поменяй фон на пляж"
     )
     await message.answer(help_text, parse_mode="HTML", reply_markup=get_main_keyboard())
-
-
-@dp.message(F.text == "💰 Баланс")
-@dp.message(Command("credits"))
-async def cmd_credits(message: types.Message):
-    """Проверка баланса"""
-    await message.answer(
-        "💰 <b>Информация о балансе AITunnel</b>\n\n"
-        "Баланс можно проверить в личном кабинете:\n"
-        "https://platform.aitunnel.ru/\n\n"
-        "<b>Примерные расценки:</b>\n"
-        "• flux.2-pro: ~5.35 руб/изображение\n"
-        "• Другие модели: смотрите в кабинете\n\n"
-        "<i>Кэширование позволяет экономить на повторных запросов</i>\n"
-        "<i>Для пополнения баланса бота используйте команду /price</i>",
-        parse_mode="HTML",
-        reply_markup=get_main_keyboard()
-    )
-
 
 @dp.message(F.text == "📊 Статистика")
 @dp.message(Command("stats"))
@@ -809,27 +987,30 @@ async def cmd_stats(message: types.Message):
     cache_count = c.fetchone()[0]
 
     conn.close()
+    
+    balance = await check_balance(user_id)
 
     if user_stats:
         requests_count, total_images, last_request = user_stats
         stats_text = (
             f"📊 <b>Ваша статистика</b>\n\n"
+            f"<b>Текущий баланс:</b> {balance} изображений\n"
             f"<b>Запросов:</b> {requests_count}\n"
             f"<b>Изображений создано:</b> {total_images}\n"
             f"<b>Последний запрос:</b> {last_request}\n"
             f"<b>Изображений в кэше:</b> {cache_count}\n\n"
-            f"<i>Кэш экономит время и деньги!</i>"
+            f"<i>Кэш экономит деньги на повторные запросы!</i>"
         )
     else:
         stats_text = (
             f"📊 <b>Статистика</b>\n\n"
+            f"<b>Текущий баланс:</b> {balance} изображений\n"
             f"Вы еще не создавали изображений\n"
             f"<b>Изображений в кэше бота:</b> {cache_count}\n\n"
             f"Попробуйте создать первое изображение!"
         )
 
     await message.answer(stats_text, parse_mode="HTML", reply_markup=get_main_keyboard())
-
 
 # ========== ОБРАБОТКА СОСТОЯНИЙ ==========
 @dp.message(StateFilter(Form.waiting_for_prompt))
@@ -847,6 +1028,18 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
 
     if len(prompt) > 1000:
         await message.answer("⚠️ Промпт слишком длинный (макс. 1000 символов)")
+        return
+
+    # Проверяем и списываем баланс
+    user_id = message.from_user.id
+    if not await deduct_balance(user_id, 1):
+        await message.answer(
+            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
+            "Пополните баланс через 💰 Цены/Оплата",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+        await state.clear()
         return
 
     await message.answer(
@@ -875,25 +1068,30 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
         else:
             error_msg = result.get("message", "Неизвестная ошибка")
             await message.answer(
-                f"❌ <b>Ошибка:</b> {error_msg}",
+                f"❌ <b>Ошибка:</b> {error_msg}\n\n"
+                f"<i>Изображение возвращено на баланс</i>",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
+            # Возвращаем изображение на баланс при ошибке
+            await add_balance(user_id, 1, 0)
 
     except Exception as e:
         logger.error(f"Ошибка обработки: {e}")
         await message.answer(
-            f"❌ <b>Системная ошибка:</b> {str(e)}",
+            f"❌ <b>Системная ошибка:</b> {str(e)}\n\n"
+            f"<i>Изображение возвращено на баланс</i>",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
+        # Возвращаем изображение на баланс при ошибке
+        await add_balance(user_id, 1, 0)
     finally:
         async with queue_lock:
             if message.from_user.id in request_queue:
                 request_queue.remove(message.from_user.id)
 
         await state.clear()
-
 
 @dp.message(StateFilter(Form.waiting_for_batch_prompts))
 async def process_batch_prompts(message: types.Message, state: FSMContext):
@@ -908,11 +1106,10 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
         await message.answer("⚠️ Введите промпты через точку с запятой")
         return
 
-    # Разделяем промпты и очищаем
     prompts = []
     for p in prompts_text.split(';'):
         p = p.strip()
-        if p:  # Добавляем только непустые промпты
+        if p:
             prompts.append(p)
 
     if not prompts:
@@ -923,13 +1120,24 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
         prompts = prompts[:MAX_PROMPTS_PER_BATCH]
         await message.answer(f"⚠️ Будут обработаны первые {MAX_PROMPTS_PER_BATCH} промптов")
 
-    # Проверяем длину каждого промпта
     for i, prompt in enumerate(prompts):
         if len(prompt) > 1000:
             await message.answer(f"⚠️ Промпт #{i + 1} слишком длинный (макс. 1000 символов)")
             return
 
-    # Показываем, что будем обрабатывать
+    user_id = message.from_user.id
+    # Проверяем и списываем баланс за все промпты
+    if not await deduct_balance(user_id, len(prompts)):
+        await message.answer(
+            f"❌ <b>Недостаточно изображений на балансе!</b>\n\n"
+            f"Нужно: {len(prompts)} изображений\n"
+            f"Пополните баланс через 💰 Цены/Оплата",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+        await state.clear()
+        return
+
     prompt_preview = "\n".join([f"• {p[:30]}{'...' if len(p) > 30 else ''}" for p in prompts[:3]])
     if len(prompts) > 3:
         prompt_preview += f"\n• ... и еще {len(prompts) - 3} промптов"
@@ -959,21 +1167,37 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
             successful_count = result.get("total_received", 0)
             update_user_stats(message.from_user.id, successful_count)
             await handle_generation_results(message, result, is_batch=True)
+            
+            # Возвращаем неиспользованные изображения
+            failed_count = len(prompts) - successful_count
+            if failed_count > 0:
+                await add_balance(user_id, failed_count, 0)
+                await message.answer(
+                    f"📊 <b>Возвращено на баланс:</b> {failed_count} изображений\n"
+                    f"<i>За неудавшиеся генерации</i>",
+                    parse_mode="HTML"
+                )
         else:
             error_msg = result.get("message", "Неизвестная ошибка")
             await message.answer(
-                f"❌ <b>Ошибка:</b> {error_msg}",
+                f"❌ <b>Ошибка:</b> {error_msg}\n\n"
+                f"<i>Все изображения возвращены на баланс</i>",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
+            # Возвращаем все изображения при ошибке
+            await add_balance(user_id, len(prompts), 0)
 
     except Exception as e:
         logger.error(f"Ошибка обработки: {e}")
         await message.answer(
-            f"❌ <b>Системная ошибка:</b> {str(e)}",
+            f"❌ <b>Системная ошибка:</b> {str(e)}\n\n"
+            f"<i>Все изображения возвращены на баланс</i>",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
+        # Возвращаем все изображения при ошибке
+        await add_balance(user_id, len(prompts), 0)
     finally:
         async with queue_lock:
             if message.from_user.id in request_queue:
@@ -981,13 +1205,24 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
 
         await state.clear()
 
-
 @dp.message(StateFilter(Form.waiting_for_photo), F.photo)
 async def process_edit_photo(message: types.Message, state: FSMContext):
     """Обработка загруженного фото"""
     if message.text == "⬅️ Назад":
         await state.clear()
         await message.answer("⬅️ Возвращаюсь в главное меню", reply_markup=get_main_keyboard())
+        return
+
+    user_id = message.from_user.id
+    # Проверяем и списываем баланс ДО загрузки фото
+    if not await deduct_balance(user_id, 1):
+        await message.answer(
+            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
+            "Пополните баланс через 💰 Цены/Оплата",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+        await state.clear()
         return
 
     try:
@@ -1020,7 +1255,6 @@ async def process_edit_photo(message: types.Message, state: FSMContext):
         )
         await state.set_state(Form.waiting_for_edit_prompt)
 
-        # Удаляем временный файл
         try:
             os.remove(temp_file)
         except:
@@ -1028,20 +1262,30 @@ async def process_edit_photo(message: types.Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Ошибка загрузки фото: {e}")
+        # Возвращаем изображение при ошибке
+        await add_balance(user_id, 1, 0)
         await message.answer(
-            f"❌ <b>Ошибка загрузки фото:</b> {str(e)[:100]}",
+            f"❌ <b>Ошибка загрузки фото:</b> {str(e)[:100]}\n\n"
+            f"<i>Изображение возвращено на баланс</i>",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
         await state.clear()
 
-
 @dp.message(StateFilter(Form.waiting_for_edit_prompt))
 async def process_edit_request(message: types.Message, state: FSMContext):
     """Обработка запроса на редактирование"""
     if message.text == "⬅️ Назад":
+        user_id = message.from_user.id
+        # Возвращаем изображение при отмене
+        await add_balance(user_id, 1, 0)
         await state.clear()
-        await message.answer("⬅️ Возвращаюсь в главное меню", reply_markup=get_main_keyboard())
+        await message.answer(
+            "⬅️ Возвращаюсь в главное меню\n\n"
+            "<i>Изображение возвращено на баланс</i>",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
         return
 
     data = await state.get_data()
@@ -1057,7 +1301,6 @@ async def process_edit_request(message: types.Message, state: FSMContext):
         await message.answer("⚠️ Введите, что изменить на фото")
         return
 
-    # Улучшаем промпт для лучшего сохранения лиц
     enhanced_prompt = enhance_edit_prompt(edit_prompt)
 
     await message.answer(
@@ -1067,7 +1310,6 @@ async def process_edit_request(message: types.Message, state: FSMContext):
         reply_markup=ReplyKeyboardRemove()
     )
 
-    # Используем улучшенный промпт
     result = await edit_image_api(photo_bytes, enhanced_prompt)
 
     if result.get("success"):
@@ -1082,7 +1324,6 @@ async def process_edit_request(message: types.Message, state: FSMContext):
                     reply_markup=get_main_keyboard()
                 )
 
-                # Чистим файл
                 try:
                     os.remove(file_path)
                 except:
@@ -1095,15 +1336,23 @@ async def process_edit_request(message: types.Message, state: FSMContext):
                     reply_markup=get_main_keyboard()
                 )
         else:
+            user_id = message.from_user.id
+            # Возвращаем изображение при ошибке
+            await add_balance(user_id, 1, 0)
             await message.answer(
-                "❌ Ошибка при сохранении файла",
+                "❌ Ошибка при сохранении файла\n\n"
+                "<i>Изображение возвращено на баланс</i>",
+                parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
     else:
         error_type = result.get("error", "unknown")
         error_msg = result.get("message", "Неизвестная ошибка")
+        user_id = message.from_user.id
+        
+        # Возвращаем изображение при ошибке
+        await add_balance(user_id, 1, 0)
 
-        # Более дружелюбные сообщения об ошибках
         if "400" in error_type:
             user_msg = (
                 "⚠️ <b>Не удалось отредактировать фото</b>\n\n"
@@ -1111,23 +1360,22 @@ async def process_edit_request(message: types.Message, state: FSMContext):
                 "• Промпт слишком сложный\n"
                 "• API не понял запрос\n"
                 "• Попробуйте упростить описание\n\n"
-                "<i>Пример: 'поменяй фон на пляж' вместо длинного описания</i>"
+                "<i>Изображение возвращено на баланс</i>"
             )
         elif "rate_limit" in error_type or "429" in error_type:
-            user_msg = "⏳ Превышен лимит запросов. Попробуйте через 1-2 минуты."
+            user_msg = "⏳ Превышен лимит запросов. Попробуйте через 1-2 минуты.\n\n<i>Изображение возвращено на баланс</i>"
         elif "timeout" in error_type:
-            user_msg = "⏳ Превышено время ожидания. Попробуйте позже."
+            user_msg = "⏳ Превышено время ожидания. Попробуйте позже.\n\n<i>Изображение возвращено на баланс</i>"
         else:
-            user_msg = f"❌ Ошибка редактирования: {error_msg}"
+            user_msg = f"❌ Ошибка редактирования: {error_msg}\n\n<i>Изображение возвращено на баланс</i>"
 
         await message.answer(
             user_msg,
-            parse_mode="HTML" if "<b>" in user_msg else None,
+            parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
 
     await state.clear()
-
 
 async def handle_generation_results(message: types.Message, result: Dict[str, Any],
                                     is_batch: bool = False):
@@ -1168,7 +1416,6 @@ async def handle_generation_results(message: types.Message, result: Dict[str, An
         if not file_paths:
             continue
 
-        # Отправляем каждое изображение отдельно
         for i, file_path in enumerate(file_paths):
             try:
                 photo = FSInputFile(file_path)
@@ -1186,7 +1433,6 @@ async def handle_generation_results(message: types.Message, result: Dict[str, An
             except Exception as e:
                 logger.error(f"Ошибка отправки фото: {e}")
 
-        # Удаляем временные файлы, если они не из кэша
         if not from_cache:
             for file_path in file_paths:
                 try:
@@ -1195,7 +1441,6 @@ async def handle_generation_results(message: types.Message, result: Dict[str, An
                 except:
                     pass
 
-    # Показываем ошибки, если есть
     error_results = [r for r in results if r.get("error")]
     if error_results:
         error_msg = "⚠️ <b>Частичные ошибки:</b>\n"
@@ -1217,10 +1462,11 @@ async def handle_generation_results(message: types.Message, result: Dict[str, An
     if cached_count > 0:
         summary += f", {cached_count} из кэша"
 
+    balance = await check_balance(message.from_user.id)
+    summary += f"\n💰 <b>Ваш баланс:</b> {balance} изображений"
     summary += "\n\n✅ <i>Готово! Что создаем дальше?</i>"
 
     await message.answer(summary, parse_mode="HTML", reply_markup=get_main_keyboard())
-
 
 # ========== ТЕКСТОВЫЕ КОМАНДЫ ==========
 @dp.message(Command("generate"))
@@ -1232,6 +1478,16 @@ async def cmd_generate_text(message: types.Message):
             "📝 <b>Использование:</b> /generate <описание>\n\n"
             "<b>Пример:</b> /generate космический кот в скафандре\n\n"
             "<i>Или используйте кнопку 🎨 Создать</i>",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+        return
+
+    user_id = message.from_user.id
+    if not await deduct_balance(user_id, 1):
+        await message.answer(
+            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
+            "Пополните баланс через 💰 Цены/Оплата",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -1260,23 +1516,26 @@ async def cmd_generate_text(message: types.Message):
         else:
             error_msg = result.get("message", "Неизвестная ошибка")
             await message.answer(
-                f"❌ <b>Ошибка:</b> {error_msg}",
+                f"❌ <b>Ошибка:</b> {error_msg}\n\n"
+                f"<i>Изображение возвращено на баланс</i>",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
+            await add_balance(user_id, 1, 0)
 
     except Exception as e:
         logger.error(f"Ошибка обработки: {e}")
         await message.answer(
-            f"❌ <b>Системная ошибка:</b> {str(e)}",
+            f"❌ <b>Системная ошибка:</b> {str(e)}\n\n"
+            f"<i>Изображение возвращено на баланс</i>",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
+        await add_balance(user_id, 1, 0)
     finally:
         async with queue_lock:
             if message.from_user.id in request_queue:
                 request_queue.remove(message.from_user.id)
-
 
 @dp.message(Command("batch"))
 async def cmd_batch_text(message: types.Message):
@@ -1294,7 +1553,6 @@ async def cmd_batch_text(message: types.Message):
         )
         return
 
-    # Разделяем промпты
     prompts = []
     for p in prompts_text.split(';'):
         p = p.strip()
@@ -1308,6 +1566,17 @@ async def cmd_batch_text(message: types.Message):
     if len(prompts) > MAX_PROMPTS_PER_BATCH:
         prompts = prompts[:MAX_PROMPTS_PER_BATCH]
         await message.answer(f"⚠️ Будут обработаны первые {MAX_PROMPTS_PER_BATCH} промптов")
+
+    user_id = message.from_user.id
+    if not await deduct_balance(user_id, len(prompts)):
+        await message.answer(
+            f"❌ <b>Недостаточно изображений на балансе!</b>\n\n"
+            f"Нужно: {len(prompts)} изображений\n"
+            f"Пополните баланс через 💰 Цены/Оплата",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard()
+        )
+        return
 
     await message.answer(
         f"📦 <b>Обрабатываю {len(prompts)} промптов:</b>\n"
@@ -1332,26 +1601,38 @@ async def cmd_batch_text(message: types.Message):
             successful_count = result.get("total_received", 0)
             update_user_stats(message.from_user.id, successful_count)
             await handle_generation_results(message, result, is_batch=True)
+            
+            failed_count = len(prompts) - successful_count
+            if failed_count > 0:
+                await add_balance(user_id, failed_count, 0)
+                await message.answer(
+                    f"📊 <b>Возвращено на баланс:</b> {failed_count} изображений\n"
+                    f"<i>За неудавшиеся генерации</i>",
+                    parse_mode="HTML"
+                )
         else:
             error_msg = result.get("message", "Неизвестная ошибка")
             await message.answer(
-                f"❌ <b>Ошибка:</b> {error_msg}",
+                f"❌ <b>Ошибка:</b> {error_msg}\n\n"
+                f"<i>Все изображения возвращены на баланс</i>",
                 parse_mode="HTML",
                 reply_markup=get_main_keyboard()
             )
+            await add_balance(user_id, len(prompts), 0)
 
     except Exception as e:
         logger.error(f"Ошибка обработки: {e}")
         await message.answer(
-            f"❌ <b>Системная ошибка:</b> {str(e)}",
+            f"❌ <b>Системная ошибка:</b> {str(e)}\n\n"
+            f"<i>Все изображения возвращены на баланс</i>",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
+        await add_balance(user_id, len(prompts), 0)
     finally:
         async with queue_lock:
             if message.from_user.id in request_queue:
                 request_queue.remove(message.from_user.id)
-
 
 # ========== ОБРАБОТЧИК ЛЮБЫХ СООБЩЕНИЙ ==========
 @dp.message()
@@ -1360,7 +1641,6 @@ async def handle_any_message(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
 
     if current_state is None:
-        # Если нет активного состояния, предлагаем вернуться в меню
         await message.answer(
             "🤖 Я тебя не понял. Используй кнопки или команды!\n\n"
             "Попробуй:\n"
@@ -1371,13 +1651,11 @@ async def handle_any_message(message: types.Message, state: FSMContext):
             reply_markup=get_main_keyboard()
         )
     else:
-        # Если есть состояние, но сообщение не обработалось
         await message.answer(
             "⚠️ Пожалуйста, используй кнопки для текущего действия.\n"
             "Или нажми '⬅️ Назад' чтобы вернуться в меню.",
             reply_markup=get_cancel_keyboard()
         )
-
 
 # ========== ЗАПУСК БОТА ==========
 async def main():
@@ -1385,28 +1663,38 @@ async def main():
     logger.info("🚀 PIXELMAGE PRO 2.0 ЗАПУЩЕН")
     logger.info("=" * 50)
     logger.info("Функции: кнопки, кэш, очередь, пакетная обработка, улучшенное редактирование")
-    logger.info("Система оплаты: ТЕСТОВЫЙ РЕЖИМ (изображения начисляются бесплатно)")
+    
+    if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
+        logger.info("💰 СИСТЕМА ОПЛАТЫ: РЕАЛЬНАЯ (ЮKassa)")
+        logger.info(f"Shop ID: {YOOKASSA_SHOP_ID[:10]}...")
+    else:
+        logger.info("💰 СИСТЕМА ОПЛАТЫ: ТЕСТОВЫЙ РЕЖИМ")
+        logger.info("⚠️ Для реальной оплаты добавьте переменные YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY")
+    
     logger.info("=" * 50)
 
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     print("=" * 50)
     print("🤖 PixelMage Pro 2.0 запускается...")
     print("=" * 50)
-    print("Отправьте /start в Telegram чтобы увидеть кнопки")
+    print("Функции с реальной оплатой через ЮKassa")
     print("=" * 50)
-    print("Основные функции:")
-    print("• 🎨  Одно изображение")
-    print("• 📝  Пакетная обработка (до 5 промптов → изображений)")
-    print("• ✏️  Улучшенное редактирование (старается сохранять лица)")
-    print("• 💰  Платные услуги (/price - цены)")
+    
+    if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY:
+        print("💰 РЕАЛЬНАЯ ОПЛАТА ВКЛЮЧЕНА")
+        print("• Оплата картами, СБП, ЮMoney")
+        print("• Автоматическое зачисление")
+        print("• Защита платежей")
+    else:
+        print("💰 ТЕСТОВЫЙ РЕЖИМ ОПЛАТЫ")
+        print("• Изображения начисляются бесплатно")
+        print("• Для реальной оплаты добавьте в Railway:")
+        print("  YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY")
+    
     print("=" * 50)
-    print("💰 СИСТЕМА В ТЕСТОВОМ РЕЖИМЕ:")
-    print("• Изображения начисляются бесплатно")
-    print("• Реальная оплата отключена")
-    print("• Для включения реальной оплаты измените код")
+    print("Отправьте /start в Telegram чтобы начать")
     print("=" * 50)
 
     try:
