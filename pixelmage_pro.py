@@ -226,7 +226,7 @@ def get_main_keyboard():
     """Основная клавиатура с кнопками"""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🖼️ Создать"), KeyboardButton(text="📝 Пакет промптов")],
+            [KeyboardButton(text="🎨 Создать"), KeyboardButton(text="📝 Пакет промптов")],  # ИЗМЕНИЛИ 🖼️ на 🎨
             [KeyboardButton(text="✏️ Редактировать"), KeyboardButton(text="ℹ️ Помощь")],
             [KeyboardButton(text="💰 Цены/Оплата"), KeyboardButton(text="📊 Статистика")],
             [KeyboardButton(text="🚪 /start"), KeyboardButton(text="⬅️ Назад")]
@@ -524,7 +524,7 @@ async def cmd_price(message: types.Message):
         f"💰 <b>Ваш баланс:</b> {images_left} изображений\n\n"
         "🖼 <b>Генерация изображений:</b>\n"
         "• 🎟 1 редактирование — <b>32 руб.</b>\n"
-        "• 🖼 1 генерация — <b>21 руб.</b>\n"
+        "• 💰 1 генерация — <b>21 руб.</b>\n"  # ИЗМЕНИЛИ 🖼 на 💰
         "• 📦 Пакет 5 промптов — <b>85 руб.</b>\n\n"
         "💳 <b>Как оплатить:</b>\n"
         "1. Нажмите на нужную кнопку с ценой\n"
@@ -536,7 +536,7 @@ async def cmd_price(message: types.Message):
     
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🎟 1 редактирование - 32 руб"), KeyboardButton(text="🖼 1 генерация - 21 руб")],
+            [KeyboardButton(text="🎟 1 редактирование - 32 руб"), KeyboardButton(text="💰 1 генерация - 21 руб")],  # ИЗМЕНИЛИ 🖼 на 💰
             [KeyboardButton(text="📦 Пакет 5 промптов - 85 руб"), KeyboardButton(text="📊 Мой баланс")],
             [KeyboardButton(text="⬅️ Назад")]
         ],
@@ -589,7 +589,7 @@ async def btn_buy_edit(message: types.Message):
     """Покупка редактирования (32 руб)"""
     await create_payment_menu(message, 32.0, "1 редактирование изображения")
 
-@dp.message(F.text.startswith("🖼"))
+@dp.message(F.text.startswith("💰"))  # ИЗМЕНИЛИ 🖼 на 💰
 async def btn_buy_generate(message: types.Message):
     """Покупка генерации (21 руб)"""
     await create_payment_menu(message, 21.0, "1 генерация изображения")
@@ -603,103 +603,47 @@ async def create_payment_menu(message: types.Message, amount: float, description
     """Создает меню оплаты"""
     user_id = message.from_user.id
     
-    # Для теста - сразу зачисляем изображения (без реальной оплаты)
-    if True:  # Поменяйте на False для реальной оплаты
-        # Тестовый режим - сразу зачисляем
-        conn = sqlite3.connect('payments.db')
-        c = conn.cursor()
-        
-        images_to_add = 0
-        if amount == 32.0:  # Редактирование
-            images_to_add = 1
-        elif amount == 21.0:  # Генерация
-            images_to_add = 1
-        elif amount == 85.0:  # Пакет
-            images_to_add = 5
-        
-        c.execute('''INSERT OR REPLACE INTO user_balance 
-                     (user_id, images_left, total_spent) 
-                     VALUES (?, COALESCE((SELECT images_left FROM user_balance WHERE user_id = ?), 0) + ?,
-                             COALESCE((SELECT total_spent FROM user_balance WHERE user_id = ?), 0) + ?)''',
-                  (user_id, user_id, images_to_add, user_id, amount))
-        
-        # Тестовый платеж
-        payment_id = f"test_{uuid.uuid4().hex}"
-        c.execute("INSERT INTO payments (user_id, amount, payment_id, status) VALUES (?, ?, ?, ?)",
-                  (user_id, amount, payment_id, 'completed'))
-        
-        conn.commit()
-        conn.close()
-        
-        await message.answer(
-            f"✅ <b>ТЕСТОВЫЙ РЕЖИМ</b>\n\n"
-            f"<b>Услуга:</b> {description}\n"
-            f"<b>Сумма:</b> {amount} руб.\n"
-            f"<b>Зачислено:</b> {images_to_add} изображений\n\n"
-            f"<i>В тестовом режиме оплата не требуется</i>\n"
-            f"<i>Теперь можете использовать бота!</i>",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-        return
-    
-    # Реальная оплата (закомментировано пока)
-    # Разкомментируйте когда будете готовы к реальным платежам
-    """
-    from yookassa import Configuration, Payment
-    
-    # Настройки ЮKassa
-    Configuration.account_id = '1246306'  # Ваш Shop ID
-    Configuration.secret_key = 'ваш_секретный_ключ'
-    
-    payment = Payment.create({
-        "amount": {
-            "value": f"{amount:.2f}",
-            "currency": "RUB"
-        },
-        "confirmation": {
-            "type": "redirect",
-            "return_url": "https://t.me/PixelMage_AI_bot"
-        },
-        "capture": True,
-        "description": description,
-        "metadata": {
-            "user_id": user_id,
-            "type": "image_generation"
-        }
-    })
-    
-    # Сохраняем в БД
+    # Тестовый режим - сразу зачисляем
     conn = sqlite3.connect('payments.db')
     c = conn.cursor()
+    
+    images_to_add = 0
+    if amount == 32.0:  # Редактирование
+        images_to_add = 1
+    elif amount == 21.0:  # Генерация
+        images_to_add = 1
+    elif amount == 85.0:  # Пакет
+        images_to_add = 5
+    
+    c.execute('''INSERT OR REPLACE INTO user_balance 
+                 (user_id, images_left, total_spent) 
+                 VALUES (?, COALESCE((SELECT images_left FROM user_balance WHERE user_id = ?), 0) + ?,
+                         COALESCE((SELECT total_spent FROM user_balance WHERE user_id = ?), 0) + ?)''',
+              (user_id, user_id, images_to_add, user_id, amount))
+    
+    # Тестовый платеж
+    payment_id = f"test_{uuid.uuid4().hex}"
     c.execute("INSERT INTO payments (user_id, amount, payment_id, status) VALUES (?, ?, ?, ?)",
-              (user_id, amount, payment.id, 'pending'))
+              (user_id, amount, payment_id, 'completed'))
+    
     conn.commit()
     conn.close()
     
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="⬅️ Назад")],
-            [KeyboardButton(text="✅ Я оплатил")]
-        ],
-        resize_keyboard=True
-    )
-    
     await message.answer(
-        f"💳 <b>Оплата {amount} руб.</b>\n\n"
-        f"<b>Услуга:</b> {description}\n\n"
-        f"Для оплаты перейдите по ссылке:\n"
-        f"<code>{payment.confirmation.confirmation_url}</code>\n\n"
-        f"<i>После оплаты нажмите кнопку ✅ Я оплатил</i>",
+        f"✅ <b>ТЕСТОВЫЙ РЕЖИМ</b>\n\n"
+        f"<b>Услуга:</b> {description}\n"
+        f"<b>Сумма:</b> {amount} руб.\n"
+        f"<b>Зачислено:</b> {images_to_add} изображений\n\n"
+        f"<i>В тестовом режиме оплата не требуется</i>\n"
+        f"<i>Теперь можете использовать бота!</i>",
         parse_mode="HTML",
-        reply_markup=keyboard
+        reply_markup=get_main_keyboard()
     )
-    """
+    return
 
 @dp.message(F.text == "✅ Я оплатил")
 async def btn_payment_done(message: types.Message):
     """Проверка оплаты"""
-    # В тестовом режиме не нужно
     await message.answer(
         "ℹ️ <b>ТЕСТОВЫЙ РЕЖИМ</b>\n\n"
         "В тестовом режиме оплата не требуется.\n"
@@ -710,6 +654,56 @@ async def btn_payment_done(message: types.Message):
     )
 
 
+# ========== ОСНОВНЫЕ КНОПКИ ==========
+@dp.message(F.text == "🎨 Создать")
+async def btn_single(message: types.Message, state: FSMContext):
+    """Одно изображение"""
+    await message.answer(
+        "✍️ <b>Введите описание изображения:</b>\n\n"
+        "<i>Пример: космический пейзаж с планетами</i>\n"
+        "<i>Или нажмите ⬅️ Назад</i>",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(Form.waiting_for_prompt)
+
+
+@dp.message(F.text == "📝 Пакет промптов")
+async def btn_batch(message: types.Message, state: FSMContext):
+    """Пакетная обработка промптов"""
+    # Временно без проверки баланса
+    await message.answer(
+        "📝 <b>Введите до 5 промптов через точку с запятой:</b>\n\n"
+        "<i>Пример: космический кот; фэнтези замок; неоновый город</i>\n"
+        "<i>Каждый промпт → отдельное изображение</i>\n"
+        "<i>Или нажмите ⬅️ Назад</i>",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(Form.waiting_for_batch_prompts)
+
+
+@dp.message(F.text == "✏️ Редактировать")
+async def btn_edit(message: types.Message, state: FSMContext):
+    """Редактирование фото"""
+    # Временно без проверки баланса
+    await message.answer(
+        "✏️ <b>Редактирование фото (улучшенная версия)</b>\n\n"
+        "📤 <b>Загрузите фото для редактирования:</b>\n\n"
+        "<i>Что лучше всего работает:</i>\n"
+        "• Замена фона (лучше всего сохраняет лица) 🏆\n"
+        "• Добавление элементов к фото\n"
+        "• Изменение стиля изображения\n"
+        "• Удаление объектов с фото\n\n"
+        "<i>⚠️ AI постарается сохранить лица, но результат не гарантирован</i>\n"
+        "<i>Поддерживаются: JPG, PNG</i>\n"
+        "<i>Или нажмите ⬅️ Назад</i>",
+        parse_mode="HTML",
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(Form.waiting_for_photo)
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     """Команда /start"""
@@ -717,7 +711,7 @@ async def cmd_start(message: types.Message):
         "🎨 <b>PixelMage Pro 2.0</b>\n\n"
         "<b>Продвинутый генератор изображений</b>\n\n"
         "<b>Основные функции:</b>\n"
-        "🖼️ <b>Создать</b> - одно изображение по промпту\n"
+        "🎨 <b>Создать</b> - одно изображение по промпту\n"
         "📝 <b>Пакет промптов</b> - до 5 промптов → до 5 изображений за раз\n"
         "✏️ <b>Редактировать</b> - изменить фон, стиль или элементы на фото\n\n"
         "<i>💡 При редактировании AI старается сохранить лица</i>\n"
@@ -754,7 +748,7 @@ async def cmd_help(message: types.Message):
     """Справка"""
     help_text = (
         "📋 <b>PixelMage Pro - Полная справка</b>\n\n"
-        "<b>🖼️ Создать (один промпт):</b>\n"
+        "<b>🎨 Создать (один промпт):</b>\n"
         "• Введите описание изображения\n"
         "• Получите один результат\n"
         "• Используется кэш для повторных запросов\n\n"
@@ -836,29 +830,8 @@ async def cmd_stats(message: types.Message):
 
     await message.answer(stats_text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
-# ========== ВРЕМЕННО ОТКЛЮЧАЕМ КНОПКУ ПОКУПКИ ==========
-@dp.message(F.text == "🖼 1 генерация - 21 руб")
-async def temp_disable_buy(message: types.Message):
-    """Временно отключаем кнопку покупки"""
-    await message.answer(
-        "ℹ️ <b>Используйте кнопку 🖼️ Создать</b>\n\n"
-        "Для создания изображения нажмите 🖼️ Создать",
-        parse_mode="HTML",
-        reply_markup=get_main_keyboard()
-    )
-@dp.message(F.text == "🖼️ Создать")
-async def btn_single(message: types.Message, state: FSMContext):
-    """Одно изображение (простая версия)"""
-    await message.answer(
-        "✍️ <b>Введите описание изображения:</b>\n\n"
-        "<i>Пример: космический пейзаж с планетами</i>\n"
-        "<i>Или нажмите ⬅️ Назад</i>",
-        parse_mode="HTML",
-        reply_markup=get_cancel_keyboard()
-    )
-    await state.set_state(Form.waiting_for_prompt)
 
-
+# ========== ОБРАБОТКА СОСТОЯНИЙ ==========
 @dp.message(StateFilter(Form.waiting_for_prompt))
 async def process_single_prompt(message: types.Message, state: FSMContext):
     """Обработка одиночного промпта"""
@@ -875,8 +848,7 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
     if len(prompt) > 1000:
         await message.answer("⚠️ Промпт слишком длинный (макс. 1000 символов)")
         return
-    
-    # ВРЕМЕННО БЕЗ ПРОВЕРКИ БАЛАНСА
+
     await message.answer(
         f"🎨 <b>Генерирую:</b> <i>{prompt}</i>\n"
         f"⏳ Подождите 20-30 секунд...\n",
@@ -923,39 +895,6 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
         await state.clear()
 
 
-@dp.message(F.text == "📝 Пакет промптов")
-async def btn_batch(message: types.Message, state: FSMContext):
-    """Пакетная обработка промптов"""
-    # Проверяем баланс
-    user_id = message.from_user.id
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
-    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-    balance_data = c.fetchone()
-    images_left = balance_data[0] if balance_data else 0
-    conn.close()
-    
-    if images_left <= 0:
-        await message.answer(
-            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
-            "Для пакетной обработки нужно оплатить пакет 5 промптов (85 руб).\n"
-            "Используйте команду /price для пополнения баланса.",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-        return
-
-    await message.answer(
-        "📝 <b>Введите до 5 промптов через точку с запятой:</b>\n\n"
-        "<i>Пример: космический кот; фэнтези замок; неоновый город</i>\n"
-        "<i>Каждый промпт → отдельное изображение</i>\n"
-        "<i>Или нажмите ⬅️ Назад</i>",
-        parse_mode="HTML",
-        reply_markup=get_cancel_keyboard()
-    )
-    await state.set_state(Form.waiting_for_batch_prompts)
-
-
 @dp.message(StateFilter(Form.waiting_for_batch_prompts))
 async def process_batch_prompts(message: types.Message, state: FSMContext):
     """Обработка пакета промптов"""
@@ -989,45 +928,6 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
         if len(prompt) > 1000:
             await message.answer(f"⚠️ Промпт #{i + 1} слишком длинный (макс. 1000 символов)")
             return
-    
-    # Проверяем баланс
-    user_id = message.from_user.id
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
-    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-    balance_data = c.fetchone()
-    images_left = balance_data[0] if balance_data else 0
-    
-    if images_left < len(prompts):
-        await message.answer(
-            f"❌ <b>Недостаточно изображений!</b>\n\n"
-            f"Нужно: {len(prompts)} изображений\n"
-            f"Доступно: {images_left} изображений\n\n"
-            f"Пополните баланс через команду /price",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-        conn.close()
-        return
-    
-    # Списываем изображения
-    c.execute("UPDATE user_balance SET images_left = images_left - ? WHERE user_id = ?", (len(prompts), user_id))
-    conn.commit()
-    
-    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-    new_balance = c.fetchone()
-    conn.close()
-    
-    if not new_balance or new_balance[0] < 0:
-        await message.answer(
-            "❌ <b>Ошибка списания!</b>\n\n"
-            "Не удалось списать изображения с баланса.\n"
-            "Проверьте баланс через команду /price",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-        await state.clear()
-        return
 
     # Показываем, что будем обрабатывать
     prompt_preview = "\n".join([f"• {p[:30]}{'...' if len(p) > 30 else ''}" for p in prompts[:3]])
@@ -1037,8 +937,7 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
     await message.answer(
         f"📦 <b>Обрабатываю {len(prompts)} промптов:</b>\n"
         f"{prompt_preview}\n"
-        f"⏳ Это займет {len(prompts) * 15} секунд...\n"
-        f"<i>Осталось изображений: {new_balance[0]}</i>",
+        f"⏳ Это займет {len(prompts) * 15} секунд...",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove()
     )
@@ -1081,45 +980,6 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
                 request_queue.remove(message.from_user.id)
 
         await state.clear()
-
-
-@dp.message(F.text == "✏️ Редактировать")
-async def btn_edit(message: types.Message, state: FSMContext):
-    """Редактирование фото"""
-    # Проверяем баланс
-    user_id = message.from_user.id
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
-    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-    balance_data = c.fetchone()
-    images_left = balance_data[0] if balance_data else 0
-    conn.close()
-    
-    if images_left <= 0:
-        await message.answer(
-            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
-            "Для редактирования 1 фото нужно оплатить 32 руб.\n"
-            "Используйте команду /price для пополнения баланса.",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-        return
-
-    await message.answer(
-        "✏️ <b>Редактирование фото (улучшенная версия)</b>\n\n"
-        "📤 <b>Загрузите фото для редактирования:</b>\n\n"
-        "<i>Что лучше всего работает:</i>\n"
-        "• Замена фона (лучше всего сохраняет лица) 🏆\n"
-        "• Добавление элементов к фото\n"
-        "• Изменение стиля изображения\n"
-        "• Удаление объектов с фото\n\n"
-        "<i>⚠️ AI постарается сохранить лица, но результат не гарантирован</i>\n"
-        "<i>Поддерживаются: JPG, PNG</i>\n"
-        "<i>Или нажмите ⬅️ Назад</i>",
-        parse_mode="HTML",
-        reply_markup=get_cancel_keyboard()
-    )
-    await state.set_state(Form.waiting_for_photo)
 
 
 @dp.message(StateFilter(Form.waiting_for_photo), F.photo)
@@ -1176,23 +1036,6 @@ async def process_edit_photo(message: types.Message, state: FSMContext):
         await state.clear()
 
 
-async def process_with_queue(user_id: int, func, *args, **kwargs):
-    """Обрабатывает запрос с учетом очереди"""
-    async with queue_lock:
-        if len(request_queue) >= PROCESSING_LIMIT:
-            return {"error": "queue_full", "message": "⏳ Очередь переполнена. Попробуйте позже."}
-
-        request_queue.append(user_id)
-
-    try:
-        result = await func(*args, **kwargs)
-        return result
-    finally:
-        async with queue_lock:
-            if user_id in request_queue:
-                request_queue.remove(user_id)
-
-
 @dp.message(StateFilter(Form.waiting_for_edit_prompt))
 async def process_edit_request(message: types.Message, state: FSMContext):
     """Обработка запроса на редактирование"""
@@ -1213,43 +1056,19 @@ async def process_edit_request(message: types.Message, state: FSMContext):
     if not edit_prompt:
         await message.answer("⚠️ Введите, что изменить на фото")
         return
-    
-    # Списываем 1 изображение с баланса
-    user_id = message.from_user.id
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
-    c.execute("UPDATE user_balance SET images_left = images_left - 1 WHERE user_id = ? AND images_left > 0", (user_id,))
-    conn.commit()
-    
-    # Проверяем, списалось ли
-    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-    new_balance = c.fetchone()
-    conn.close()
-    
-    if not new_balance or new_balance[0] < 0:
-        await message.answer(
-            "❌ <b>Ошибка списания!</b>\n\n"
-            "Не удалось списать изображение с баланса.\n"
-            "Проверьте баланс через команду /price",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-        await state.clear()
-        return
 
     # Улучшаем промпт для лучшего сохранения лиц
     enhanced_prompt = enhance_edit_prompt(edit_prompt)
 
     await message.answer(
         f"✏️ <b>Редактирую (стараюсь сохранить лица):</b> <i>{edit_prompt[:80]}</i>\n"
-        f"⏳ Подождите 20-30 секунд...\n"
-        f"<i>Осталось изображений: {new_balance[0]}</i>",
+        f"⏳ Подождите 20-30 секунд...",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove()
     )
 
     # Используем улучшенный промпт
-    result = await process_with_queue(message.from_user.id, edit_image_api, photo_bytes, enhanced_prompt)
+    result = await edit_image_api(photo_bytes, enhanced_prompt)
 
     if result.get("success"):
         file_path = result.get("file_path")
@@ -1393,7 +1212,7 @@ async def handle_generation_results(message: types.Message, result: Dict[str, An
     if is_batch:
         summary = f"📦 <b>Пакетная обработка завершена:</b> {success_count}/{total_requested} успешно"
     else:
-        summary = f"🖼️ <b>Генерация завершена:</b> {success_count} изображений"
+        summary = f"🎨 <b>Генерация завершена:</b> {success_count} изображений"
 
     if cached_count > 0:
         summary += f", {cached_count} из кэша"
@@ -1407,31 +1226,12 @@ async def handle_generation_results(message: types.Message, result: Dict[str, An
 @dp.message(Command("generate"))
 async def cmd_generate_text(message: types.Message):
     """Текстовая команда /generate"""
-    # Проверяем баланс
-    user_id = message.from_user.id
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
-    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-    balance_data = c.fetchone()
-    images_left = balance_data[0] if balance_data else 0
-    conn.close()
-    
-    if images_left <= 0:
-        await message.answer(
-            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
-            "Для создания 1 изображения нужно оплатить 21 руб.\n"
-            "Используйте команду /price для пополнения баланса.",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-        return
-    
     prompt = message.text.replace('/generate', '', 1).strip()
     if not prompt:
         await message.answer(
             "📝 <b>Использование:</b> /generate <описание>\n\n"
             "<b>Пример:</b> /generate космический кот в скафандре\n\n"
-            "<i>Или используйте кнопку 🖼️ Создать</i>",
+            "<i>Или используйте кнопку 🎨 Создать</i>",
             parse_mode="HTML",
             reply_markup=get_main_keyboard()
         )
@@ -1481,25 +1281,6 @@ async def cmd_generate_text(message: types.Message):
 @dp.message(Command("batch"))
 async def cmd_batch_text(message: types.Message):
     """Текстовая команда /batch"""
-    # Проверяем баланс
-    user_id = message.from_user.id
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
-    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-    balance_data = c.fetchone()
-    images_left = balance_data[0] if balance_data else 0
-    conn.close()
-    
-    if images_left <= 0:
-        await message.answer(
-            "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
-            "Для пакетной обработки нужно оплатить пакет 5 промптов (85 руб).\n"
-            "Используйте команду /price для пополнения баланса.",
-            parse_mode="HTML",
-            reply_markup=get_main_keyboard()
-        )
-        return
-    
     prompts_text = message.text.replace('/batch', '', 1).strip()
 
     if not prompts_text:
@@ -1597,18 +1378,7 @@ async def handle_any_message(message: types.Message, state: FSMContext):
             reply_markup=get_cancel_keyboard()
         )
 
-# ========== ВРЕМЕННЫЙ ФИКС ДЛЯ КНОПКИ "СОЗДАТЬ" ==========
-@dp.message(F.text == "🖼️ Создать")
-async def btn_simple_create(message: types.Message, state: FSMContext):
-    """Простая версия кнопки создания"""
-    await message.answer(
-        "✍️ <b>Введите описание изображения:</b>\n\n"
-        "<i>Пример: космический пейзаж с планетами</i>\n"
-        "<i>Или нажмите ⬅️ Назад</i>",
-        parse_mode="HTML",
-        reply_markup=get_cancel_keyboard()
-    )
-    await state.set_state(Form.waiting_for_prompt)
+
 # ========== ЗАПУСК БОТА ==========
 async def main():
     logger.info("=" * 50)
@@ -1628,7 +1398,7 @@ if __name__ == "__main__":
     print("Отправьте /start в Telegram чтобы увидеть кнопки")
     print("=" * 50)
     print("Основные функции:")
-    print("• 🖼️  Одно изображение")
+    print("• 🎨  Одно изображение")
     print("• 📝  Пакетная обработка (до 5 промптов → изображений)")
     print("• ✏️  Улучшенное редактирование (старается сохранять лица)")
     print("• 💰  Платные услуги (/price - цены)")
