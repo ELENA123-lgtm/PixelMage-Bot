@@ -1642,7 +1642,88 @@ async def cmd_batch_text(message: types.Message):
         async with queue_lock:
             if message.from_user.id in request_queue:
                 request_queue.remove(message.from_user.id)
+# ========== АДМИН ПАНЕЛЬ ==========
+@dp.message(Command("admin"))
+async def cmd_admin(message: types.Message):
+    """Админ-панель (только для вас)"""
+    # ⚠️ ВАЖНО: ЗАМЕНИТЕ ЭТО ЧИСЛО НА ВАШ ID В TELEGRAM!
+    # Чтобы узнать свой ID: напишите @userinfobot в Telegram
+    YOUR_USER_ID = 953958006  # ⬅️ ЗАМЕНИТЕ ЭТО ЧИСЛО!
+    
+    if message.from_user.id != YOUR_USER_ID:
+        await message.answer("⛔ Доступ запрещен")
+        return
+    
+    # Статистика по платежам
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    
+    # Общая статистика
+    c.execute("SELECT SUM(amount) FROM payments WHERE status = 'completed'")
+    total_income = c.fetchone()[0] or 0
+    
+    c.execute("SELECT COUNT(*) FROM payments WHERE status = 'completed'")
+    total_payments = c.fetchone()[0] or 0
+    
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM payments WHERE status = 'completed'")
+    unique_payers = c.fetchone()[0] or 0
+    
+    # Статистика по тарифам
+    c.execute("""
+        SELECT description, COUNT(*), SUM(amount)
+        FROM payment_history 
+        WHERE status = 'completed'
+        GROUP BY description
+    """)
+    tariff_stats = c.fetchall()
+    
+    # Последние платежи
+    c.execute("""
+        SELECT user_id, amount, description, created_at 
+        FROM payments 
+        WHERE status = 'completed' 
+        ORDER BY created_at DESC 
+        LIMIT 10
+    """)
+    recent_payments = c.fetchall()
+    
+    conn.close()
+    
+    # Рассчет комиссий
+    yookassa_commission = total_income * 0.045  # ~4.5% комиссия ЮKassa
+    aitunnel_cost = total_payments * 5.35  # Стоимость AITunnel
+    estimated_profit = total_income - yookassa_commission - aitunnel_cost
+    
+    text = (
+        f"👑 <b>АДМИН ПАНЕЛЬ PIXELMAGE</b>\n\n"
+        f"💰 <b>ФИНАНСЫ:</b>\n"
+        f"• Всего поступлений: <b>{total_income} руб.</b>\n"
+        f"• Количество платежей: <b>{total_payments}</b>\n"
+        f"• Уникальных плательщиков: <b>{unique_payers}</b>\n\n"
+        
+        f"🧮 <b>РАСЧЕТ ПРИБЫЛИ:</b>\n"
+        f"• Доход: {total_income} руб.\n"
+        f"• Комиссия ЮKassa (~4.5%): -{yookassa_commission:.2f} руб.\n"
+        f"• Стоимость AITunnel: -{aitunnel_cost:.2f} руб.\n"
+        f"• <b>Приблизительная прибыль: {estimated_profit:.2f} руб.</b>\n\n"
+        
+        f"📊 <b>СТАТИСТИКА ПО ТАРИФАМ:</b>\n"
+    )
+    
+    for description, count, amount in tariff_stats:
+        text += f"• {description}: {count} шт. / {amount} руб.\n"
+    
+    text += f"\n🆕 <b>ПОСЛЕДНИЕ ПЛАТЕЖИ (10):</b>\n"
+    
+    for user_id, amount, description, created_at in recent_payments:
+        date_str = created_at[:10] if isinstance(created_at, str) else str(created_at)[:10]
+        text += f"• {amount} руб. - {description} ({date_str})\n"
+    
+    text += f"\n⚡ <b>ДЛЯ ВЫВОДА:</b> kassa.yandex.ru"
+    
+    await message.answer(text, parse_mode="HTML")
 
+# ========== ОБРАБОТЧИК ЛЮБЫХ СООБЩЕНИЙ ==========
 # ========== ОБРАБОТЧИК ЛЮБЫХ СООБЩЕНИЙ ==========
 @dp.message()
 async def handle_any_message(message: types.Message, state: FSMContext):
