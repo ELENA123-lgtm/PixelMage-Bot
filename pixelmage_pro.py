@@ -1739,6 +1739,13 @@ async def cmd_admin(message: types.Message):
     
     await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
 
+# ========== КНОПКА АДМИН-ПАНЕЛИ ==========
+@dp.message(F.text == "👑 Админ-панель")
+async def btn_admin_panel(message: types.Message):
+    """Обработка кнопки админ-панели"""
+    # Вызываем ту же функцию, что и для команды /admin
+    await cmd_admin(message)
+
 # ========== ОБРАБОТЧИК ЛЮБЫХ СООБЩЕНИЙ ==========
 @dp.message()
 async def handle_any_message(message: types.Message, state: FSMContext):
