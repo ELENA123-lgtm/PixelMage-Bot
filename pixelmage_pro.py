@@ -58,6 +58,9 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+# ========== КОНСТАНТЫ ==========
+YOUR_USER_ID = 953958006  # ⬅️ ЗАМЕНИТЕ ЭТО НА ВАШ РЕАЛЬНЫЙ TELEGRAM ID!
+
 # ========== БАЗА ДАННЫХ ==========
 def init_db():
     """Инициализация всех баз данных"""
@@ -202,15 +205,23 @@ class Form(StatesGroup):
     waiting_for_photo = State()
 
 # ========== КЛАВИАТУРЫ ==========
-def get_main_keyboard():
-    """Основная клавиатура с кнопками"""
+def get_main_keyboard(user_id: int = None):
+    """Основная клавиатура с кнопками - кнопка админа только для вас"""
+    # Базовая клавиатура для всех пользователей
+    buttons = [
+        [KeyboardButton(text="🎨 Создать"), KeyboardButton(text="📝 Пакет промптов")],
+        [KeyboardButton(text="✏️ Редактировать"), KeyboardButton(text="ℹ️ Помощь")],
+        [KeyboardButton(text="💰 Цены/Оплата"), KeyboardButton(text="📊 Статистика")],
+        [KeyboardButton(text="🚪 /start"), KeyboardButton(text="⬅️ Назад")]
+    ]
+    
+    # Добавляем кнопку админа ТОЛЬКО для вас
+    if user_id == YOUR_USER_ID:
+        # Вставляем строку с админ-кнопкой перед последней строкой
+        buttons.insert(-1, [KeyboardButton(text="👑 Админ-панель")])
+    
     keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🎨 Создать"), KeyboardButton(text="📝 Пакет промптов")],
-            [KeyboardButton(text="✏️ Редактировать"), KeyboardButton(text="ℹ️ Помощь")],
-            [KeyboardButton(text="💰 Цены/Оплата"), KeyboardButton(text="📊 Статистика")],
-            [KeyboardButton(text="🚪 /start"), KeyboardButton(text="⬅️ Назад")]
-        ],
+        keyboard=buttons,
         resize_keyboard=True,
         input_field_placeholder="Выберите действие..."
     )
@@ -616,7 +627,7 @@ async def cmd_start(message: types.Message):
         "<i>Выберите действие ниже:</i>"
     )
 
-    await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_main_keyboard())
+    await message.answer(welcome_text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
 
 @dp.message(F.text == "🚪 /start")
 async def btn_start_again(message: types.Message, state: FSMContext):
@@ -628,7 +639,7 @@ async def btn_start_again(message: types.Message, state: FSMContext):
 async def cancel_action(message: types.Message, state: FSMContext):
     """Отмена текущего действия"""
     await state.clear()
-    await message.answer("✅ Возвращаюсь в главное меню", reply_markup=get_main_keyboard())
+    await message.answer("✅ Возвращаюсь в главное меню", reply_markup=get_main_keyboard(message.from_user.id))
 
 @dp.message(Command("price"))
 @dp.message(F.text == "💰 Цены/Оплата")
@@ -701,7 +712,7 @@ async def btn_my_balance(message: types.Message):
             f"<i>Используйте кнопки ниже для пополнения</i>"
         )
     
-    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
+    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
 
 # ========== КНОПКИ ОПЛАТЫ ==========
 @dp.message(F.text.startswith("🎟"))
@@ -734,7 +745,7 @@ async def create_payment_menu(message: types.Message, amount: float, description
     if not result.get("success"):
         await message.answer(
             f"❌ Ошибка при создании платежа: {result.get('error', 'Неизвестная ошибка')}",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
     
@@ -748,7 +759,7 @@ async def create_payment_menu(message: types.Message, amount: float, description
             f"<i>В тестовом режиме оплата не требуется</i>\n"
             f"<i>Теперь можете использовать бота!</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
     else:
         # Реальный платеж
@@ -787,7 +798,7 @@ async def btn_payment_done(message: types.Message):
             "ℹ️ У вас нет ожидающих платежей.\n\n"
             "Если вы только что оплатили, подождите 1-2 минуты.\n"
             "Система обрабатывает платежи автоматически.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
     
@@ -819,7 +830,7 @@ async def btn_payment_done(message: types.Message):
                 f"<b>Ваш баланс:</b> {balance} изображений\n\n"
                 f"<i>Теперь можете использовать функции бота</i>",
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
         elif status == 'pending':
             await message.answer(
@@ -835,7 +846,7 @@ async def btn_payment_done(message: types.Message):
                 f"Статус: {status}\n\n"
                 f"Попробуйте оплатить снова или обратитесь в поддержку.",
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
     else:
         # Тестовый режим
@@ -845,7 +856,7 @@ async def btn_payment_done(message: types.Message):
             "Изображения уже зачислены на ваш баланс.\n"
             "Используйте кнопку 📊 Мой баланс для проверки.",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
 
 @dp.message(F.text == "🔄 Проверить оплату")
@@ -870,7 +881,7 @@ async def btn_single(message: types.Message, state: FSMContext):
             f"<i>Ваш баланс: {balance} изображений</i>\n"
             f"<i>💡 Совет: Пакет 5 промптов за 99 руб выгоднее!</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
     
@@ -896,7 +907,7 @@ async def btn_batch(message: types.Message, state: FSMContext):
             f"<i>Ваш баланс: {balance} изображений</i>\n\n"
             "💡 <b>Совет:</b> Возьмите пакет 5 промптов за 99 руб - это выгоднее!",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
     
@@ -923,7 +934,7 @@ async def btn_edit(message: types.Message, state: FSMContext):
             f"<i>Ваш баланс: {balance} изображений</i>\n\n"
             "💡 <b>Совет:</b> Купите пакет - будет дешевле в пересчете на одно изображение!",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
     
@@ -974,7 +985,7 @@ async def cmd_help(message: types.Message):
         "• портрет эльфа; фэнтези арт; магический лес\n"
         "• поменяй фон на пляж"
     )
-    await message.answer(help_text, parse_mode="HTML", reply_markup=get_main_keyboard())
+    await message.answer(help_text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
 
 @dp.message(F.text == "📊 Статистика")
 @dp.message(Command("stats"))
@@ -1014,7 +1025,14 @@ async def cmd_stats(message: types.Message):
             f"Попробуйте создать первое изображение!"
         )
 
-    await message.answer(stats_text, parse_mode="HTML", reply_markup=get_main_keyboard())
+    await message.answer(stats_text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
+
+# ========== КНОПКА АДМИН-ПАНЕЛИ ==========
+@dp.message(F.text == "👑 Админ-панель")
+async def btn_admin_panel(message: types.Message):
+    """Обработка кнопки админ-панели"""
+    # Вызываем ту же функцию, что и для команды /admin
+    await cmd_admin(message)
 
 # ========== ОБРАБОТКА СОСТОЯНИЙ ==========
 @dp.message(StateFilter(Form.waiting_for_prompt))
@@ -1022,7 +1040,7 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
     """Обработка одиночного промпта"""
     if message.text == "⬅️ Назад":
         await state.clear()
-        await message.answer("⬅️ Возвращаюсь в главное меню", reply_markup=get_main_keyboard())
+        await message.answer("⬅️ Возвращаюсь в главное меню", reply_markup=get_main_keyboard(message.from_user.id))
         return
 
     prompt = message.text.strip()
@@ -1041,7 +1059,7 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
             "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
             "Пополните баланс через 💰 Цены/Оплата",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         await state.clear()
         return
@@ -1057,7 +1075,7 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
         if len(request_queue) >= PROCESSING_LIMIT:
             await message.answer(
                 "⏳ Очередь переполнена. Попробуйте через минуту.",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
             await state.clear()
             return
@@ -1075,7 +1093,7 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
                 f"❌ <b>Ошибка:</b> {error_msg}\n\n"
                 f"<i>Изображение возвращено на баланс</i>",
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
             # Возвращаем изображение на баланс при ошибке
             await add_balance(user_id, 1, 0)
@@ -1086,7 +1104,7 @@ async def process_single_prompt(message: types.Message, state: FSMContext):
             f"❌ <b>Системная ошибка:</b> {str(e)}\n\n"
             f"<i>Изображение возвращено на баланс</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         # Возвращаем изображение на баланс при ошибке
         await add_balance(user_id, 1, 0)
@@ -1102,7 +1120,7 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
     """Обработка пакета промптов"""
     if message.text == "⬅️ Назад":
         await state.clear()
-        await message.answer("⬅️ Возвращаюсь в главное меню", reply_markup=get_main_keyboard())
+        await message.answer("⬅️ Возвращаюсь в главное меню", reply_markup=get_main_keyboard(message.from_user.id))
         return
 
     prompts_text = message.text.strip()
@@ -1137,7 +1155,7 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
             f"Нужно: {len(prompts)} изображений\n"
             f"Пополните баланс через 💰 Цены/Оплата",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         await state.clear()
         return
@@ -1158,7 +1176,7 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
         if len(request_queue) >= PROCESSING_LIMIT:
             await message.answer(
                 "⏳ Очередь переполнена. Попробуйте через минуту.",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
             await state.clear()
             return
@@ -1187,7 +1205,7 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
                 f"❌ <b>Ошибка:</b> {error_msg}\n\n"
                 f"<i>Все изображения возвращены на баланс</i>",
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
             # Возвращаем все изображения при ошибке
             await add_balance(user_id, len(prompts), 0)
@@ -1198,7 +1216,7 @@ async def process_batch_prompts(message: types.Message, state: FSMContext):
             f"❌ <b>Системная ошибка:</b> {str(e)}\n\n"
             f"<i>Все изображения возвращены на баланс</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         # Возвращаем все изображения при ошибке
         await add_balance(user_id, len(prompts), 0)
@@ -1214,7 +1232,7 @@ async def process_edit_photo(message: types.Message, state: FSMContext):
     """Обработка загруженного фото"""
     if message.text == "⬅️ Назад":
         await state.clear()
-        await message.answer("⬅️ Возвращаюсь в главное меню", reply_markup=get_main_keyboard())
+        await message.answer("⬅️ Возвращаюсь в главное меню", reply_markup=get_main_keyboard(message.from_user.id))
         return
 
     user_id = message.from_user.id
@@ -1224,7 +1242,7 @@ async def process_edit_photo(message: types.Message, state: FSMContext):
             "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
             "Пополните баланс через 💰 Цены/Оплата",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         await state.clear()
         return
@@ -1272,7 +1290,7 @@ async def process_edit_photo(message: types.Message, state: FSMContext):
             f"❌ <b>Ошибка загрузки фото:</b> {str(e)[:100]}\n\n"
             f"<i>Изображение возвращено на баланс</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         await state.clear()
 
@@ -1288,7 +1306,7 @@ async def process_edit_request(message: types.Message, state: FSMContext):
             "⬅️ Возвращаюсь в главное меню\n\n"
             "<i>Изображение возвращено на баланс</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
 
@@ -1297,7 +1315,7 @@ async def process_edit_request(message: types.Message, state: FSMContext):
     edit_prompt = message.text.strip()
 
     if not photo_bytes:
-        await message.answer("❌ Фото не загружено", reply_markup=get_main_keyboard())
+        await message.answer("❌ Фото не загружено", reply_markup=get_main_keyboard(message.from_user.id))
         await state.clear()
         return
 
@@ -1325,7 +1343,7 @@ async def process_edit_request(message: types.Message, state: FSMContext):
                 await message.answer_photo(
                     photo,
                     caption=f"✅ Отредактировано: {edit_prompt[:100]}",
-                    reply_markup=get_main_keyboard()
+                    reply_markup=get_main_keyboard(message.from_user.id)
                 )
 
                 try:
@@ -1337,7 +1355,7 @@ async def process_edit_request(message: types.Message, state: FSMContext):
                 logger.error(f"Ошибка отправки фото: {e}")
                 await message.answer(
                     "✅ Редактирование завершено, но не удалось отправить фото",
-                    reply_markup=get_main_keyboard()
+                    reply_markup=get_main_keyboard(message.from_user.id)
                 )
         else:
             user_id = message.from_user.id
@@ -1347,7 +1365,7 @@ async def process_edit_request(message: types.Message, state: FSMContext):
                 "❌ Ошибка при сохранении файла\n\n"
                 "<i>Изображение возвращено на баланс</i>",
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
     else:
         error_type = result.get("error", "unknown")
@@ -1376,7 +1394,7 @@ async def process_edit_request(message: types.Message, state: FSMContext):
         await message.answer(
             user_msg,
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
 
     await state.clear()
@@ -1390,7 +1408,7 @@ async def handle_generation_results(message: types.Message, result: Dict[str, An
             f"❌ <b>Ошибка:</b> {error_msg}\n\n"
             f"<i>Попробуйте упростить промпт или использовать другую функцию</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
 
@@ -1403,7 +1421,7 @@ async def handle_generation_results(message: types.Message, result: Dict[str, An
         await message.answer(
             "❌ Нет результатов генерации\n"
             "Попробуйте другой промпт",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
 
@@ -1475,7 +1493,7 @@ async def handle_generation_results(message: types.Message, result: Dict[str, An
     
     summary += "\n\n✅ <i>Готово! Что создаем дальше?</i>"
 
-    await message.answer(summary, parse_mode="HTML", reply_markup=get_main_keyboard())
+    await message.answer(summary, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
 
 # ========== ТЕКСТОВЫЕ КОМАНДЫ ==========
 @dp.message(Command("generate"))
@@ -1488,7 +1506,7 @@ async def cmd_generate_text(message: types.Message):
             "<b>Пример:</b> /generate космический кот в скафандре\n\n"
             "<i>Или используйте кнопку 🎨 Создать</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
 
@@ -1498,7 +1516,7 @@ async def cmd_generate_text(message: types.Message):
             "❌ <b>Недостаточно изображений на балансе!</b>\n\n"
             "Пополните баланс через 💰 Цены/Оплата",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
 
@@ -1511,7 +1529,7 @@ async def cmd_generate_text(message: types.Message):
         if len(request_queue) >= PROCESSING_LIMIT:
             await message.answer(
                 "⏳ Очередь переполнена. Попробуйте через минуту.",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
             return
         request_queue.append(message.from_user.id)
@@ -1528,7 +1546,7 @@ async def cmd_generate_text(message: types.Message):
                 f"❌ <b>Ошибка:</b> {error_msg}\n\n"
                 f"<i>Изображение возвращено на баланс</i>",
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
             await add_balance(user_id, 1, 0)
 
@@ -1538,7 +1556,7 @@ async def cmd_generate_text(message: types.Message):
             f"❌ <b>Системная ошибка:</b> {str(e)}\n\n"
             f"<i>Изображение возвращено на баланс</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         await add_balance(user_id, 1, 0)
     finally:
@@ -1558,7 +1576,7 @@ async def cmd_batch_text(message: types.Message):
             "<b>Максимум:</b> 5 промптов за раз\n\n"
             "<i>Или используйте кнопку 📝 Пакет промптов</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
 
@@ -1583,7 +1601,7 @@ async def cmd_batch_text(message: types.Message):
             f"Нужно: {len(prompts)} изображений\n"
             f"Пополните баланс через 💰 Цены/Оплата",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         return
 
@@ -1598,7 +1616,7 @@ async def cmd_batch_text(message: types.Message):
         if len(request_queue) >= PROCESSING_LIMIT:
             await message.answer(
                 "⏳ Очередь переполнена. Попробуйте через минуту.",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
             return
         request_queue.append(message.from_user.id)
@@ -1625,7 +1643,7 @@ async def cmd_batch_text(message: types.Message):
                 f"❌ <b>Ошибка:</b> {error_msg}\n\n"
                 f"<i>Все изображения возвращены на баланс</i>",
                 parse_mode="HTML",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(message.from_user.id)
             )
             await add_balance(user_id, len(prompts), 0)
 
@@ -1635,23 +1653,21 @@ async def cmd_batch_text(message: types.Message):
             f"❌ <b>Системная ошибка:</b> {str(e)}\n\n"
             f"<i>Все изображения возвращены на баланс</i>",
             parse_mode="HTML",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
         await add_balance(user_id, len(prompts), 0)
     finally:
         async with queue_lock:
             if message.from_user.id in request_queue:
                 request_queue.remove(message.from_user.id)
+
 # ========== АДМИН ПАНЕЛЬ ==========
 @dp.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     """Админ-панель (только для вас)"""
-    # ⚠️ ВАЖНО: ЗАМЕНИТЕ ЭТО ЧИСЛО НА ВАШ ID В TELEGRAM!
-    # Чтобы узнать свой ID: напишите @userinfobot в Telegram
-    YOUR_USER_ID = 953958006  # ⬅️ ЗАМЕНИТЕ ЭТО ЧИСЛО!
     
     if message.from_user.id != YOUR_USER_ID:
-        await message.answer("⛔ Доступ запрещен")
+        await message.answer("⛔ Доступ запрещен", reply_markup=get_main_keyboard(message.from_user.id))
         return
     
     # Статистика по платежам
@@ -1721,9 +1737,8 @@ async def cmd_admin(message: types.Message):
     
     text += f"\n⚡ <b>ДЛЯ ВЫВОДА:</b> kassa.yandex.ru"
     
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
 
-# ========== ОБРАБОТЧИК ЛЮБЫХ СООБЩЕНИЙ ==========
 # ========== ОБРАБОТЧИК ЛЮБЫХ СООБЩЕНИЙ ==========
 @dp.message()
 async def handle_any_message(message: types.Message, state: FSMContext):
@@ -1738,7 +1753,7 @@ async def handle_any_message(message: types.Message, state: FSMContext):
             "/help - показать справку\n"
             "/price - цены на услуги\n"
             "Или выбери действие из меню ниже 👇",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(message.from_user.id)
         )
     else:
         await message.answer(
@@ -1791,6 +1806,7 @@ if __name__ == "__main__":
         print("  YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY")
     
     print("=" * 50)
+    print(f"👑 Админ-панель доступна только для ID: {YOUR_USER_ID}")
     print("Отправьте /start в Telegram чтобы начать")
     print("=" * 50)
 
