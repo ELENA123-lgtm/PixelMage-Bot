@@ -863,7 +863,20 @@ async def btn_payment_done(message: types.Message):
 async def btn_check_payment(message: types.Message):
     """Проверка оплаты"""
     await btn_payment_done(message)
-
+# ========== КНОПКА АДМИН-ПАНЕЛИ (С ОТЛАДКОЙ) ==========
+@dp.message(F.text == "👑 Админ-панель")
+async def btn_admin_panel(message: types.Message):
+    """Обработка кнопки админ-панели"""
+    logger.info(f"🚨 DEBUG: Кнопка админа нажата пользователем {message.from_user.id}")
+    logger.info(f"🚨 DEBUG: Текст сообщения: '{message.text}'")
+    logger.info(f"🚨 DEBUG: Длина текста: {len(message.text)}")
+    
+    # Для отладки - выводим каждый символ
+    for i, char in enumerate(message.text):
+        logger.info(f"🚨 DEBUG: Символ {i}: '{char}' (код: {ord(char)})")
+    
+    # Вызываем ту же функцию, что и для команды /admin
+    await cmd_admin(message)
 # ========== ОСНОВНЫЕ КНОПКИ ==========
 @dp.message(F.text == "🎨 Создать")
 async def btn_single(message: types.Message, state: FSMContext):
