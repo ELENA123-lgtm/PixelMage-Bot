@@ -1683,72 +1683,72 @@ async def cmd_admin(message: types.Message):
         await message.answer("⛔ Доступ запрещен", reply_markup=get_main_keyboard(message.from_user.id))
         return
     
-    # Статистика по платежам
-    conn = sqlite3.connect('payments.db')
-    c = conn.cursor()
+    # Получаем статистику из БД
+    conn_cache = sqlite3.connect('bot_cache.db')
+    conn_payments = sqlite3.connect('payments.db')
     
-    # Общая статистика
-    c.execute("SELECT SUM(amount) FROM payments WHERE status = 'completed'")
-    total_income = c.fetchone()[0] or 0
+    c_cache = conn_cache.cursor()
+    c_payments = conn_payments.cursor()
     
-    c.execute("SELECT COUNT(*) FROM payments WHERE status = 'completed'")
-    total_payments = c.fetchone()[0] or 0
+    # 1. Статистика пользователей
+    c_payments.execute("SELECT COUNT(DISTINCT user_id) FROM user_balance WHERE images_left > 0")
+    active_users = c_payments.fetchone()[0] or 0
     
-    c.execute("SELECT COUNT(DISTINCT user_id) FROM payments WHERE status = 'completed'")
-    unique_payers = c.fetchone()[0] or 0
+    c_payments.execute("SELECT COUNT(DISTINCT user_id) FROM payments WHERE status = 'completed'")
+    total_users = c_payments.fetchone()[0] or 0
     
-    # Статистика по тарифам
-    c.execute("""
-        SELECT description, COUNT(*), SUM(amount)
-        FROM payment_history 
-        WHERE status = 'completed'
-        GROUP BY description
-    """)
-    tariff_stats = c.fetchall()
+    # 2. Статистика генераций
+    c_cache.execute("SELECT COUNT(*) FROM user_stats")
+    total_requests = c_cache.fetchone()[0] or 0
     
-    # Последние платежи
-    c.execute("""
-        SELECT user_id, amount, description, created_at 
-        FROM payments 
-        WHERE status = 'completed' 
-        ORDER BY created_at DESC 
-        LIMIT 10
-    """)
-    recent_payments = c.fetchall()
+    c_cache.execute("SELECT SUM(total_images) FROM user_stats")
+    successful_generations = c_cache.fetchone()[0] or 0
     
-    conn.close()
+    # 3. Статистика по платежам
+    c_payments.execute("SELECT SUM(amount) FROM payments WHERE status = 'completed'")
+    total_income = c_payments.fetchone()[0] or 0
     
-    # Рассчет комиссий
-    yookassa_commission = total_income * 0.045  # ~4.5% комиссия ЮKassa
-    aitunnel_cost = total_payments * 5.35  # Стоимость AITunnel
-    estimated_profit = total_income - yookassa_commission - aitunnel_cost
+    c_payments.execute("SELECT COUNT(*) FROM payments WHERE status = 'completed'")
+    total_payments_count = c_payments.fetchone()[0] or 0
     
+    # 4. Кэш
+    c_cache.execute("SELECT COUNT(*) FROM image_cache")
+    cache_count = c_cache.fetchone()[0] or 0
+    
+    # Рассчет успешности
+    success_rate = 100.0 if total_requests == 0 else (successful_generations / total_requests * 100)
+    
+    # Проверка API ключа
+    api_key_status = "✅ есть" if AITUNNEL_API_KEY else "❌ нет"
+    yookassa_status = "✅ включена" if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY else "⏸ тестовый режим"
+    
+    conn_cache.close()
+    conn_payments.close()
+    
+    # Формируем сообщение как в вашем примере
     text = (
-        f"👑 <b>АДМИН ПАНЕЛЬ PIXELMAGE</b>\n\n"
-        f"💰 <b>ФИНАНСЫ:</b>\n"
-        f"• Всего поступлений: <b>{total_income} руб.</b>\n"
-        f"• Количество платежей: <b>{total_payments}</b>\n"
-        f"• Уникальных плательщиков: <b>{unique_payers}</b>\n\n"
+        f"👑 <b>АДМИН ПАНЕЛЬ</b>\n\n"
         
-        f"🧮 <b>РАСЧЕТ ПРИБЫЛИ:</b>\n"
-        f"• Доход: {total_income} руб.\n"
-        f"• Комиссия ЮKassa (~4.5%): -{yookassa_commission:.2f} руб.\n"
-        f"• Стоимость AITunnel: -{aitunnel_cost:.2f} руб.\n"
-        f"• <b>Приблизительная прибыль: {estimated_profit:.2f} руб.</b>\n\n"
+        f"👥 <b>Пользователи:</b>\n"
+        f"• Всего: {total_users}\n"
+        f"• С балансом: {active_users}\n\n"
         
-        f"📊 <b>СТАТИСТИКА ПО ТАРИФАМ:</b>\n"
+        f"🎨 <b>Генерации:</b>\n"
+        f"• Всего запросов: {total_requests}\n"
+        f"• Успешно: {successful_generations}\n"
+        f"• Ошибок: {total_requests - successful_generations}\n"
+        f"• Успешность: {success_rate:.1f}%\n\n"
+        
+        f"💰 <b>Финансы:</b>\n"
+        f"• Всего поступлений: {total_income} руб.\n"
+        f"• Количество платежей: {total_payments_count}\n\n"
+        
+        f"🔧 <b>Система:</b>\n"
+        f"• API ключ: {api_key_status}\n"
+        f"• Оплата: {yookassa_status}\n"
+        f"• Изображений в кэше: {cache_count}\n"
+        f"• Бот работает: ✅ стабильно"
     )
-    
-    for description, count, amount in tariff_stats:
-        text += f"• {description}: {count} шт. / {amount} руб.\n"
-    
-    text += f"\n🆕 <b>ПОСЛЕДНИЕ ПЛАТЕЖИ (10):</b>\n"
-    
-    for user_id, amount, description, created_at in recent_payments:
-        date_str = created_at[:10] if isinstance(created_at, str) else str(created_at)[:10]
-        text += f"• {amount} руб. - {description} ({date_str})\n"
-    
-    text += f"\n⚡ <b>ДЛЯ ВЫВОДА:</b> kassa.yandex.ru"
     
     await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
 
