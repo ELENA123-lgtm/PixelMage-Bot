@@ -61,50 +61,144 @@ dp = Dispatcher(storage=storage)
 # ========== КОНСТАНТЫ ==========
 YOUR_USER_ID = 953958006  # ⬅️ ЗАМЕНИТЕ ЭТО НА ВАШ РЕАЛЬНЫЙ TELEGRAM ID!
 
+# ========== ВОССТАНОВЛЕНИЕ БАЗЫ ДАННЫХ ==========
+def restore_database_from_yookassa():
+    """Восстанавливает данные платежей из ЮKassa"""
+    try:
+        if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
+            logger.warning("⚠️ Нет ключей ЮKassa для восстановления данных")
+            return
+        
+        import yookassa
+        from yookassa import Configuration, Payment
+        
+        # Настройка
+        Configuration.account_id = YOOKASSA_SHOP_ID
+        Configuration.secret_key = YOOKASSA_SECRET_KEY
+        
+        # Создаем или пересоздаем базу данных
+        conn = sqlite3.connect('payments.db')
+        c = conn.cursor()
+        
+        # Очищаем таблицы (сохраняем структуру)
+        c.execute("DELETE FROM payments")
+        c.execute("DELETE FROM user_balance")
+        c.execute("DELETE FROM payment_history")
+        
+        # Получаем платежи из ЮKassa
+        try:
+            payments = Payment.list({"limit": 100})  # Берем последние 100 платежей
+            
+            restored_count = 0
+            for payment in payments.items:
+                if payment.status == 'succeeded' and payment.metadata and 'user_id' in payment.metadata:
+                    user_id = int(payment.metadata['user_id'])
+                    amount = float(payment.amount.value)
+                    
+                    # Определяем сколько изображений дать за сумму
+                    images_to_add = 0
+                    if amount == 39.0:
+                        images_to_add = 1
+                    elif amount == 29.0:
+                        images_to_add = 1
+                    elif amount == 99.0:
+                        images_to_add = 5
+                    elif amount == 199.0:
+                        images_to_add = 15
+                    
+                    if images_to_add > 0:
+                        # Восстанавливаем платеж
+                        c.execute('''INSERT OR IGNORE INTO payments 
+                                     (user_id, amount, payment_id, yookassa_payment_id, status, created_at) 
+                                     VALUES (?, ?, ?, ?, ?, ?)''',
+                                  (user_id, amount, f"restored_{payment.id}", 
+                                   payment.id, 'completed', 
+                                   payment.created_at or datetime.now().isoformat()))
+                        
+                        # Восстанавливаем баланс пользователя
+                        c.execute('''INSERT OR REPLACE INTO user_balance 
+                                     (user_id, images_left, total_spent) 
+                                     VALUES (?, COALESCE((SELECT images_left FROM user_balance WHERE user_id = ?), 0) + ?,
+                                             COALESCE((SELECT total_spent FROM user_balance WHERE user_id = ?), 0) + ?)''',
+                                  (user_id, user_id, images_to_add, user_id, amount))
+                        
+                        # Восстанавливаем историю
+                        description = f"Восстановленный платеж: {amount} руб."
+                        c.execute('''INSERT INTO payment_history 
+                                     (user_id, amount, description, status, created_at) 
+                                     VALUES (?, ?, ?, ?, ?)''',
+                                  (user_id, amount, description, 'completed', 
+                                   payment.created_at or datetime.now().isoformat()))
+                        
+                        restored_count += 1
+                        logger.info(f"✅ Восстановлен платеж: user_id={user_id}, amount={amount}, images={images_to_add}")
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"✅ Восстановлено {restored_count} платежей из ЮKassa")
+            
+            # Проверяем что восстановилось
+            conn = sqlite3.connect('payments.db')
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM user_balance")
+            balance_count = c.fetchone()[0]
+            c.execute("SELECT SUM(amount) FROM payments WHERE status = 'completed'")
+            total_income = c.fetchone()[0] or 0
+            conn.close()
+            
+            logger.info(f"✅ В БД: {balance_count} пользователей, {total_income} руб. доход")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка восстановления из ЮKassa: {e}")
+            conn.close()
+    
+    except Exception as e:
+        logger.error(f"❌ Ошибка при восстановлении БД: {e}")
+
 # ========== БАЗА ДАННЫХ ==========
 def init_db():
     """Инициализация всех баз данных"""
-    try:
-        # База для кэша
-        conn = sqlite3.connect('bot_cache.db')
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS image_cache
-                     (prompt_hash TEXT PRIMARY KEY,
-                      file_path TEXT,
-                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS user_stats
-                     (user_id INTEGER PRIMARY KEY,
-                      requests_count INTEGER DEFAULT 0,
-                      total_images INTEGER DEFAULT 0,
-                      last_request TIMESTAMP)''')
-        conn.commit()
-        conn.close()
-        
-        # База для платежей
-        conn = sqlite3.connect('payments.db')
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS payments
-                     (user_id INTEGER,
-                      amount REAL,
-                      payment_id TEXT,
-                      status TEXT,
-                      yookassa_payment_id TEXT,
-                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS user_balance
-                     (user_id INTEGER PRIMARY KEY,
-                      images_left INTEGER DEFAULT 0,
-                      total_spent REAL DEFAULT 0)''')
-        c.execute('''CREATE TABLE IF NOT EXISTS payment_history
-                     (user_id INTEGER,
-                      amount REAL,
-                      description TEXT,
-                      status TEXT,
-                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-        conn.commit()
-        conn.close()
-        logger.info("✅ Базы данных инициализированы")
-    except Exception as e:
-        logger.error(f"❌ Ошибка инициализации БД: {e}")
+    # База для кэша
+    conn = sqlite3.connect('bot_cache.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS image_cache
+                 (prompt_hash TEXT PRIMARY KEY,
+                  file_path TEXT,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_stats
+                 (user_id INTEGER PRIMARY KEY,
+                  requests_count INTEGER DEFAULT 0,
+                  total_images INTEGER DEFAULT 0,
+                  last_request TIMESTAMP)''')
+    conn.commit()
+    conn.close()
+    
+    # База для платежей
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS payments
+                 (user_id INTEGER,
+                  amount REAL,
+                  payment_id TEXT,
+                  status TEXT,
+                  yookassa_payment_id TEXT,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_balance
+                 (user_id INTEGER PRIMARY KEY,
+                  images_left INTEGER DEFAULT 0,
+                  total_spent REAL DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS payment_history
+                 (user_id INTEGER,
+                  amount REAL,
+                  description TEXT,
+                  status TEXT,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    conn.commit()
+    conn.close()
+    
+    # Пытаемся восстановить данные из ЮKassa при старте
+    restore_database_from_yookassa()
 
 init_db()
 
@@ -117,46 +211,36 @@ MAX_PROMPTS_PER_BATCH = 5
 # ========== ФУНКЦИИ КЭША ==========
 def get_cached_image(prompt: str) -> Optional[str]:
     """Получает изображение из кэша"""
-    try:
-        prompt_hash = hashlib.md5(prompt.encode()).hexdigest()
-        conn = sqlite3.connect('bot_cache.db')
-        c = conn.cursor()
-        c.execute("SELECT file_path FROM image_cache WHERE prompt_hash = ?", (prompt_hash,))
-        result = c.fetchone()
-        conn.close()
-        return result[0] if result else None
-    except Exception as e:
-        logger.error(f"Ошибка получения из кэша: {e}")
-        return None
+    prompt_hash = hashlib.md5(prompt.encode()).hexdigest()
+    conn = sqlite3.connect('bot_cache.db')
+    c = conn.cursor()
+    c.execute("SELECT file_path FROM image_cache WHERE prompt_hash = ?", (prompt_hash,))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else None
 
 def save_to_cache(prompt: str, file_path: str):
     """Сохраняет изображение в кэш"""
-    try:
-        prompt_hash = hashlib.md5(prompt.encode()).hexdigest()
-        conn = sqlite3.connect('bot_cache.db')
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO image_cache (prompt_hash, file_path) VALUES (?, ?)",
-                  (prompt_hash, file_path))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error(f"Ошибка сохранения в кэш: {e}")
+    prompt_hash = hashlib.md5(prompt.encode()).hexdigest()
+    conn = sqlite3.connect('bot_cache.db')
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO image_cache (prompt_hash, file_path) VALUES (?, ?)",
+              (prompt_hash, file_path))
+    conn.commit()
+    conn.close()
 
 def update_user_stats(user_id: int, images_count: int = 1):
-    """Обновляет статистику пользователя"""
-    try:
-        conn = sqlite3.connect('bot_cache.db')
-        c = conn.cursor()
-        c.execute('''INSERT OR REPLACE INTO user_stats 
-                     (user_id, requests_count, total_images, last_request) 
-                     VALUES (?, COALESCE((SELECT requests_count FROM user_stats WHERE user_id = ?), 0) + 1,
-                             COALESCE((SELECT total_images FROM user_stats WHERE user_id = ?), 0) + ?,
-                             ?)''',
-                  (user_id, user_id, user_id, images_count, datetime.now()))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.error(f"Ошибка обновления статистики: {e}")
+    """Обновляет статистика пользователя"""
+    conn = sqlite3.connect('bot_cache.db')
+    c = conn.cursor()
+    c.execute('''INSERT OR REPLACE INTO user_stats 
+                 (user_id, requests_count, total_images, last_request) 
+                 VALUES (?, COALESCE((SELECT requests_count FROM user_stats WHERE user_id = ?), 0) + 1,
+                         COALESCE((SELECT total_images FROM user_stats WHERE user_id = ?), 0) + ?,
+                         ?)''',
+              (user_id, user_id, user_id, images_count, datetime.now()))
+    conn.commit()
+    conn.close()
 
 def enhance_edit_prompt(original_prompt: str) -> str:
     """Автоматически улучшаем промпт для сохранения лиц"""
@@ -262,69 +346,59 @@ def get_payment_keyboard():
 # ========== БАЛАНС И ОПЛАТА ==========
 async def check_balance(user_id: int) -> int:
     """Проверяет баланс пользователя"""
-    try:
-        conn = sqlite3.connect('payments.db')
-        c = conn.cursor()
-        c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-        result = c.fetchone()
-        conn.close()
-        return result[0] if result else 0
-    except Exception as e:
-        logger.error(f"Ошибка проверки баланса: {e}")
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    if result:
+        logger.info(f"💰 Баланс пользователя {user_id}: {result[0]} изображений")
+        return result[0]
+    else:
+        logger.info(f"💰 Пользователь {user_id} не найден в базе")
         return 0
 
 async def deduct_balance(user_id: int, amount: int = 1) -> bool:
     """Списывает изображения с баланса"""
-    try:
-        conn = sqlite3.connect('payments.db')
-        c = conn.cursor()
-        
-        # Проверяем баланс
-        c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-        result = c.fetchone()
-        
-        if not result or result[0] < amount:
-            conn.close()
-            return False
-        
-        # Списание
-        c.execute("UPDATE user_balance SET images_left = images_left - ? WHERE user_id = ?", 
-                  (amount, user_id))
-        conn.commit()
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    
+    # Проверяем баланс
+    c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    
+    if not result:
         conn.close()
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка списания баланса: {e}")
+        logger.warning(f"❌ Пользователь {user_id} не найден в базе")
         return False
+    
+    if result[0] < amount:
+        conn.close()
+        logger.warning(f"❌ Недостаточно изображений: есть {result[0]}, нужно {amount}")
+        return False
+    
+    # Списание
+    c.execute("UPDATE user_balance SET images_left = images_left - ? WHERE user_id = ?", 
+              (amount, user_id))
+    conn.commit()
+    conn.close()
+    logger.info(f"✅ Списано {amount} изображений с баланса пользователя {user_id}")
+    return True
 
 async def add_balance(user_id: int, images_to_add: int, amount: float):
     """Добавляет изображения на баланс"""
-    try:
-        conn = sqlite3.connect('payments.db')
-        c = conn.cursor()
-        
-        # Проверяем существует ли пользователь
-        c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
-        result = c.fetchone()
-        
-        if result is None:
-            # Создаем новую запись
-            c.execute("INSERT INTO user_balance (user_id, images_left, total_spent) VALUES (?, ?, ?)",
-                      (user_id, images_to_add, amount))
-        else:
-            # Обновляем существующую запись
-            c.execute("UPDATE user_balance SET images_left = images_left + ?, total_spent = total_spent + ? WHERE user_id = ?",
-                      (images_to_add, amount, user_id))
-        
-        # Добавляем в историю платежей
-        c.execute("INSERT INTO payment_history (user_id, amount, description, status) VALUES (?, ?, ?, ?)",
-                  (user_id, amount, f"Пополнение: {images_to_add} изображений", 'completed'))
-        
-        conn.commit()
-        conn.close()
-        logger.info(f"✅ Баланс добавлен: user_id={user_id}, images={images_to_add}, amount={amount}")
-    except Exception as e:
-        logger.error(f"Ошибка добавления баланса: {e}")
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    
+    c.execute('''INSERT OR REPLACE INTO user_balance 
+                 (user_id, images_left, total_spent) 
+                 VALUES (?, COALESCE((SELECT images_left FROM user_balance WHERE user_id = ?), 0) + ?,
+                         COALESCE((SELECT total_spent FROM user_balance WHERE user_id = ?), 0) + ?)''',
+              (user_id, user_id, images_to_add, user_id, amount))
+    
+    conn.commit()
+    conn.close()
+    logger.info(f"✅ Добавлено {images_to_add} изображений на баланс пользователя {user_id}")
 
 def get_images_count_by_amount(amount: float) -> int:
     """Сколько изображений дать за сумму - ПРАВИЛЬНЫЕ ЦЕНЫ"""
@@ -416,6 +490,8 @@ async def create_test_payment(user_id: int, amount: float, description: str):
     payment_id = f"test_{uuid.uuid4().hex}"
     c.execute("INSERT INTO payments (user_id, amount, payment_id, status) VALUES (?, ?, ?, ?)",
               (user_id, amount, payment_id, 'completed'))
+    c.execute("INSERT INTO payment_history (user_id, amount, description, status) VALUES (?, ?, ?, ?)",
+              (user_id, amount, description, 'completed'))
     conn.commit()
     conn.close()
     
@@ -899,6 +975,40 @@ async def btn_check_payment(message: types.Message):
     """Проверка оплаты"""
     await btn_payment_done(message)
 
+# ========== ВОССТАНОВИТЬ БАЛАНС ВРУЧНУЮ ==========
+@dp.message(Command("restore"))
+async def cmd_restore(message: types.Message):
+    """Восстановить баланс вручную (только для админа)"""
+    if message.from_user.id != YOUR_USER_ID:
+        await message.answer("⛔ Доступ запрещен", reply_markup=get_main_keyboard(message.from_user.id))
+        return
+    
+    await message.answer(
+        "🔄 <b>Восстановление данных из ЮKassa</b>\n\n"
+        "Начинаю восстановление платежей...",
+        parse_mode="HTML"
+    )
+    
+    restore_database_from_yookassa()
+    
+    # Проверяем что восстановилось
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM user_balance")
+    users_count = c.fetchone()[0] or 0
+    c.execute("SELECT SUM(amount) FROM payments WHERE status = 'completed'")
+    total_income = c.fetchone()[0] or 0
+    conn.close()
+    
+    await message.answer(
+        f"✅ <b>Восстановление завершено</b>\n\n"
+        f"• Пользователей в базе: {users_count}\n"
+        f"• Всего поступлений: {total_income} руб.\n\n"
+        f"Теперь бот должен работать корректно!",
+        parse_mode="HTML",
+        reply_markup=get_main_keyboard(message.from_user.id)
+    )
+
 # ========== ОСНОВНЫЕ КНОПКИ ==========
 @dp.message(F.text == "🎨 Создать")
 async def btn_single(message: types.Message, state: FSMContext):
@@ -1329,20 +1439,6 @@ async def process_edit_photo(message: types.Message, state: FSMContext):
         )
         await state.clear()
 
-@dp.message(StateFilter(Form.waiting_for_photo), ~F.photo)
-async def process_no_photo(message: types.Message, state: FSMContext):
-    """Если пользователь отправил не фото в режиме ожидания фото"""
-    if message.text == "⬅️ Назад":
-        await state.clear()
-        await message.answer("⬅️ Возвращаюсь в главное меню", reply_markup=get_main_keyboard(message.from_user.id))
-        return
-    
-    await message.answer(
-        "⚠️ Пожалуйста, отправьте фото для редактирования!\n\n"
-        "Или нажмите ⬅️ Назад чтобы вернуться в меню.",
-        reply_markup=get_cancel_keyboard()
-    )
-
 @dp.message(StateFilter(Form.waiting_for_edit_prompt))
 async def process_edit_request(message: types.Message, state: FSMContext):
     """Обработка запроса на редактирование"""
@@ -1719,89 +1815,89 @@ async def cmd_admin(message: types.Message):
         await message.answer("⛔ Доступ запрещен", reply_markup=get_main_keyboard(message.from_user.id))
         return
     
-    try:
-        # Получаем статистику из БД
-        conn_cache = sqlite3.connect('bot_cache.db')
-        conn_payments = sqlite3.connect('payments.db')
-        
-        c_cache = conn_cache.cursor()
-        c_payments = conn_payments.cursor()
-        
-        # 1. Статистика пользователей
-        c_payments.execute("SELECT COUNT(DISTINCT user_id) FROM user_balance WHERE images_left > 0")
-        active_users = c_payments.fetchone()
-        active_users = active_users[0] if active_users else 0
-        
-        c_payments.execute("SELECT COUNT(DISTINCT user_id) FROM payments WHERE status = 'completed'")
-        total_users = c_payments.fetchone()
-        total_users = total_users[0] if total_users else 0
-        
-        # 2. Статистика генераций
-        c_cache.execute("SELECT COUNT(*) FROM user_stats")
-        total_requests = c_cache.fetchone()
-        total_requests = total_requests[0] if total_requests else 0
-        
-        c_cache.execute("SELECT SUM(total_images) FROM user_stats")
-        successful_generations = c_cache.fetchone()
-        successful_generations = successful_generations[0] if successful_generations else 0
-        
-        # 3. Статистика по платежам
-        c_payments.execute("SELECT SUM(amount) FROM payments WHERE status = 'completed'")
-        total_income = c_payments.fetchone()
-        total_income = total_income[0] if total_income else 0.0
-        
-        c_payments.execute("SELECT COUNT(*) FROM payments WHERE status = 'completed'")
-        total_payments_count = c_payments.fetchone()
-        total_payments_count = total_payments_count[0] if total_payments_count else 0
-        
-        # 4. Кэш
-        c_cache.execute("SELECT COUNT(*) FROM image_cache")
-        cache_count = c_cache.fetchone()
-        cache_count = cache_count[0] if cache_count else 0
-        
-        conn_cache.close()
-        conn_payments.close()
-        
-        # Рассчет успешности
-        success_rate = 100.0 if total_requests == 0 else (successful_generations / total_requests * 100)
-        
-        # Проверка API ключа
-        api_key_status = "✅ есть" if AITUNNEL_API_KEY else "❌ нет"
-        yookassa_status = "✅ включена" if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY else "⏸ тестовый режим"
-        
-        # Формируем сообщение
-        text = (
-            f"👑 <b>АДМИН ПАНЕЛЬ</b>\n\n"
-            
-            f"👥 <b>Пользователи:</b>\n"
-            f"• Всего: {total_users}\n"
-            f"• С балансом: {active_users}\n\n"
-            
-            f"🎨 <b>Генерации:</b>\n"
-            f"• Всего запросов: {total_requests}\n"
-            f"• Успешно: {successful_generations}\n"
-            f"• Ошибок: {max(0, total_requests - successful_generations)}\n"
-            f"• Успешность: {success_rate:.1f}%\n\n"
-            
-            f"💰 <b>Финансы:</b>\n"
-            f"• Всего поступлений: {total_income} руб.\n"
-            f"• Количество платежей: {total_payments_count}\n\n"
-            
-            f"🔧 <b>Система:</b>\n"
-            f"• API ключ: {api_key_status}\n"
-            f"• Оплата: {yookassa_status}\n"
-            f"• Изображений в кэше: {cache_count}\n"
-            f"• Бот работает: ✅ стабильно"
-        )
-        
-        await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
+    # Получаем статистику из БД
+    conn_cache = sqlite3.connect('bot_cache.db')
+    conn_payments = sqlite3.connect('payments.db')
     
-    except Exception as e:
-        logger.error(f"Ошибка админ-панели: {e}")
-        await message.answer(
-            f"❌ Ошибка при получении статистики: {str(e)[:100]}",
-            reply_markup=get_main_keyboard(message.from_user.id)
-        )
+    c_cache = conn_cache.cursor()
+    c_payments = conn_payments.cursor()
+    
+    # 1. Статистика пользователей
+    c_payments.execute("SELECT COUNT(DISTINCT user_id) FROM user_balance WHERE images_left > 0")
+    active_users_result = c_payments.fetchone()
+    active_users = active_users_result[0] if active_users_result else 0
+    
+    c_payments.execute("SELECT COUNT(DISTINCT user_id) FROM payments WHERE status = 'completed'")
+    total_users_result = c_payments.fetchone()
+    total_users = total_users_result[0] if total_users_result else 0
+    
+    # 2. Статистика генераций
+    c_cache.execute("SELECT COUNT(*) FROM user_stats")
+    total_requests_result = c_cache.fetchone()
+    total_requests = total_requests_result[0] if total_requests_result else 0
+    
+    c_cache.execute("SELECT SUM(total_images) FROM user_stats")
+    successful_generations_result = c_cache.fetchone()
+    successful_generations = successful_generations_result[0] if successful_generations_result else 0
+    
+    # 3. Статистика по платежам
+    c_payments.execute("SELECT SUM(amount) FROM payments WHERE status = 'completed'")
+    total_income_result = c_payments.fetchone()
+    total_income = total_income_result[0] if total_income_result else 0
+    
+    c_payments.execute("SELECT COUNT(*) FROM payments WHERE status = 'completed'")
+    total_payments_count_result = c_payments.fetchone()
+    total_payments_count = total_payments_count_result[0] if total_payments_count_result else 0
+    
+    # 4. Кэш
+    c_cache.execute("SELECT COUNT(*) FROM image_cache")
+    cache_count_result = c_cache.fetchone()
+    cache_count = cache_count_result[0] if cache_count_result else 0
+    
+    conn_cache.close()
+    conn_payments.close()
+    
+    # Рассчет успешности
+    success_rate = 100.0 if total_requests == 0 else (successful_generations / total_requests * 100)
+    
+    # Проверка API ключа
+    api_key_status = "✅ есть" if AITUNNEL_API_KEY else "❌ нет"
+    yookassa_status = "✅ включена" if YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY else "⏸ тестовый режим"
+    
+    # Формируем сообщение как в вашем примере
+    text = (
+        f"👑 <b>АДМИН ПАНЕЛЬ</b>\n\n"
+        
+        f"👥 <b>Пользователи:</b>\n"
+        f"• Всего: {total_users}\n"
+        f"• С балансом: {active_users}\n\n"
+        
+        f"🎨 <b>Генерации:</b>\n"
+        f"• Всего запросов: {total_requests}\n"
+        f"• Успешно: {successful_generations}\n"
+        f"• Ошибок: {max(0, total_requests - successful_generations)}\n"
+        f"• Успешность: {success_rate:.1f}%\n\n"
+        
+        f"💰 <b>Финансы:</b>\n"
+        f"• Всего поступлений: {total_income} руб.\n"
+        f"• Количество платежей: {total_payments_count}\n\n"
+        
+        f"🔧 <b>Система:</b>\n"
+        f"• API ключ: {api_key_status}\n"
+        f"• Оплата: {yookassa_status}\n"
+        f"• Изображений в кэше: {cache_count}\n"
+        f"• Бот работает: ✅ стабильно"
+    )
+    
+    await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
+
+# ========== КНОПКА АДМИН-ПАНЕЛИ ==========
+@dp.message(F.text == "👑 Админ-панель")
+async def btn_admin_panel(message: types.Message):
+    """Обработка кнопки админ-панели"""
+    # Вызываем ту же функцию, что и для команды /admin
+    await cmd_admin(message)
+    
 
 # ========== ОБРАБОТЧИК ЛЮБЫХ СООБЩЕНИЙ ==========
 @dp.message()
