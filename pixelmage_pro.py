@@ -310,7 +310,8 @@ def get_main_keyboard(user_id: int = None):
         [KeyboardButton(text="🎨 Создать"), KeyboardButton(text="📝 Пакет промптов")],
         [KeyboardButton(text="✏️ Редактировать"), KeyboardButton(text="ℹ️ Помощь")],
         [KeyboardButton(text="💰 Цены/Оплата"), KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="🚪 /start"), KeyboardButton(text="⬅️ Назад")]
+        [KeyboardButton(text="🎁 Бесплатный тест"), KeyboardButton(text="🚪 /start")],
+        [KeyboardButton(text="⬅️ Назад")]
     ]
     
     # Добавляем кнопку админа ТОЛЬКО для вас
@@ -1890,7 +1891,81 @@ async def cmd_admin(message: types.Message):
     )
     
     await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
-
+# ========== БЕСПЛАТНЫЙ ТЕСТ ==========
+@dp.message(F.text == "🎁 Бесплатный тест")
+async def btn_free_test(message: types.Message):
+    """Бесплатный тест для новых пользователей"""
+    user_id = message.from_user.id
+    
+    # Проверяем, получал ли пользователь уже подарок
+    conn = sqlite3.connect('payments.db')
+    c = conn.cursor()
+    
+    # Проверяем есть ли запись о бесплатном подарке
+    c.execute("SELECT COUNT(*) FROM payment_history WHERE user_id = ? AND (description LIKE '%бесплатный%' OR description LIKE '%подарок%' OR description LIKE '%тест%')", (user_id,))
+    has_free_gift = c.fetchone()[0] > 0
+    
+    if has_free_gift:
+        conn.close()
+        balance = await check_balance(user_id)
+        await message.answer(
+            "🎁 <b>Вы уже получали бесплатный тест!</b>\n\n"
+            f"💰 <b>Ваш текущий баланс:</b> {balance} изображений\n\n"
+            "💡 <b>Хотите больше изображений?</b>\n"
+            "• 📦 Пакет 5 промптов - 99 руб (выгодно!)\n"
+            "• 🎁 Большой пакет 15 - 199 руб (очень выгодно!)",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard(user_id)
+        )
+        return
+    
+    # Дарим 1 изображение БЕСПЛАТНО
+    try:
+        # Сначала проверяем есть ли пользователь в базе
+        c.execute("SELECT images_left FROM user_balance WHERE user_id = ?", (user_id,))
+        result = c.fetchone()
+        
+        if result:
+            # Есть запись - добавляем 1
+            c.execute("UPDATE user_balance SET images_left = images_left + 1 WHERE user_id = ?", (user_id,))
+            images_left = result[0] + 1
+        else:
+            # Нет записи - создаем
+            c.execute("INSERT INTO user_balance (user_id, images_left) VALUES (?, ?)", (user_id, 1))
+            images_left = 1
+        
+        # Записываем в историю (БЕЗ списания денег!)
+        c.execute("INSERT INTO payment_history (user_id, amount, description, status, created_at) VALUES (?, ?, ?, ?, ?)",
+                  (user_id, 0, "Бесплатный тестовый подарок (кнопка 🎁)", 'completed', datetime.now()))
+        
+        conn.commit()
+        conn.close()
+        
+        await message.answer(
+            "🎁 <b>БЕСПЛАТНЫЙ ТЕСТОВЫЙ ПОДАРОК!</b>\n\n"
+            "✅ Вам начислено: <b>1 тестовое изображение</b>\n\n"
+            "🎨 <b>Что можно сделать:</b>\n"
+            "• Нажмите '🎨 Создать' - сгенерировать изображение\n"
+            "• Или '✏️ Редактировать' - изменить фото\n\n"
+            f"💰 <b>Ваш баланс теперь:</b> {images_left} изображение\n\n"
+            "💡 <b>Понравилось?</b> Купите пакет изображений - это выгоднее!\n"
+            "📦 Пакет 5 промптов = 99 руб (экономия 46 руб!)",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard(user_id)
+        )
+        
+        # Логируем
+        logger.info(f"🎁 Бесплатный тест выдан user_id={user_id}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при выдаче бесплатного теста: {e}")
+        conn.close()
+        await message.answer(
+            "❌ <b>Ошибка при выдаче теста</b>\n\n"
+            "Попробуйте позже или обратитесь в поддержку.",
+            parse_mode="HTML",
+            reply_markup=get_main_keyboard(user_id)
+        )
 # ========== КНОПКА АДМИН-ПАНЕЛИ ==========
 @dp.message(F.text == "👑 Админ-панель")
 async def btn_admin_panel(message: types.Message):
