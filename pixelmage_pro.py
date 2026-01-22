@@ -827,22 +827,22 @@ async def btn_my_balance(message: types.Message):
     await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard(message.from_user.id))
 
 # ========== КНОПКИ ОПЛАТЫ ==========
-@dp.message(F.text.startswith("🎟"))
+@dp.message(F.text == "🎟 1 редактирование - 39 руб")
 async def btn_buy_edit(message: types.Message):
     """Покупка редактирования (39 руб)"""
     await create_payment_menu(message, 39.0, "1 редактирование изображения")
 
-@dp.message(F.text.startswith("💰"))
+@dp.message(F.text == "💰 1 генерация - 29 руб")
 async def btn_buy_generate(message: types.Message):
     """Покупка генерации (29 руб)"""
     await create_payment_menu(message, 29.0, "1 генерация изображения")
 
-@dp.message(F.text.startswith("📦"))
+@dp.message(F.text == "📦 Пакет 5 промптов - 99 руб")
 async def btn_buy_batch(message: types.Message):
     """Покупка пакета (99 руб)"""
     await create_payment_menu(message, 99.0, "Пакет 5 промптов")
 
-@dp.message(F.text.startswith("🎁"))
+@dp.message(F.text == "🎁 Большой пакет 15 - 199 руб")
 async def btn_buy_big_batch(message: types.Message):
     """Покупка большого пакета (199 руб)"""
     await create_payment_menu(message, 199.0, "Большой пакет 15 промптов")
